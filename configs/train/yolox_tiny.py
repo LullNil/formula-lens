@@ -7,7 +7,8 @@ class Exp(MyExp):
     def __init__(self):
         super().__init__()
 
-        annotations_dir = os.path.join("datasets", "prepared", "formulas_coco_v1", "annotations")
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+        annotations_dir = os.path.join(project_root, "datasets", "prepared", "formulas_coco_v1", "annotations")
 
         self.num_classes = 6
         self.class_names = (
@@ -23,14 +24,12 @@ class Exp(MyExp):
         self.width = 0.375
 
         self.exp_name = os.path.split(os.path.realpath(__file__))[1].split(".")[0]
-        self.data_dir = "datasets/prepared/formulas_coco_v1"
+        self.data_dir = os.path.join(project_root, "datasets", "prepared", "formulas_coco_v1")
         self.train_ann = "instances_train2017.json"
-        self.val_ann = (
-            "instances_val2017.json"
-            if os.path.exists(os.path.join(annotations_dir, "instances_val2017.json"))
-            else self.train_ann
-        )
-        self.output_dir = "weights/finetuned"
+        has_val_split = os.path.exists(os.path.join(annotations_dir, "instances_val2017.json"))
+        self.val_ann = "instances_val2017.json" if has_val_split else self.train_ann
+        self.eval_split_name = "val2017" if has_val_split else "train2017"
+        self.output_dir = os.path.join(project_root, "weights", "finetuned")
 
         self.input_size = (640, 640)
         self.test_size = (640, 640)

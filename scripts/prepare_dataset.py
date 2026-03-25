@@ -82,19 +82,17 @@ def normalize_split_payload(payload: dict[str, Any]) -> dict[str, Any]:
     image_ids = {int(image["id"]) for image in images}
 
     annotations_by_image: dict[int, list[dict[str, Any]]] = defaultdict(list)
-    used_category_ids: set[int] = set()
     for annotation in annotations:
         image_id = int(annotation["image_id"])
         if image_id not in image_ids:
             continue
         annotations_by_image[image_id].append(annotation)
-        used_category_ids.add(int(annotation["category_id"]))
 
     categories = sorted(
         [
             category
             for category in payload.get("categories", [])
-            if int(category["id"]) in used_category_ids
+            if int(category["id"]) != 0
         ],
         key=lambda item: int(item["id"]),
     )
