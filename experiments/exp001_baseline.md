@@ -75,3 +75,35 @@ Still needed for a trustworthy benchmark:
 - Export a Roboflow split with `valid`, or add a real `val` set under `datasets/roboflow_exports/formulas_coco_v1/valid`.
 - Re-run `scripts/prepare_dataset.py` so it creates `annotations/instances_val2017.json`.
 - Re-run training to get held-out validation metrics.
+
+## Qualitative Sweep
+
+Added on `2026-03-26` after `src/formulalens/inference.py` was implemented.
+These examples were generated with the current best inference checkpoint `weights/finetuned/yolox_nano/best_ckpt.pth` against `24` real formulas from `datasets/prepared/formulas_coco_v1/val2017`.
+
+- Images processed: `24`
+- Total detections: `199`
+- Min detections per image: `3`
+- Max detections per image: `18`
+- Average detections per image: `8.29`
+- Assets root: `experiments/assets/exp001_baseline/`
+- Summary JSON: `experiments/assets/exp001_baseline/qualitative_summary.json`
+
+Representative contact sheet:
+
+![Qualitative sweep contact sheet](assets/exp001_baseline/qualitative_grid.jpg)
+
+Selected examples:
+
+- `0-124_png.rf.da5fccdb9aed8a966ca079f509a6a0bb.jpg` -> `3` detections (`block`, `denominator`, `numerator`)  
+  ![0-124 example](assets/exp001_baseline/qualitative/0-124_png.rf.da5fccdb9aed8a966ca079f509a6a0bb.jpg)
+- `0-159_png.rf.e98be543e47c916ba4b544ee18dc9643.jpg` -> `11` detections  
+  ![0-159 example](assets/exp001_baseline/qualitative/0-159_png.rf.e98be543e47c916ba4b544ee18dc9643.jpg)
+- `0-318_png.rf.525473f0ce1d0eae3b0993ef8bb706e7.jpg` -> `11` detections  
+  ![0-318 example](assets/exp001_baseline/qualitative/0-318_png.rf.525473f0ce1d0eae3b0993ef8bb706e7.jpg)
+- `0-359_png.rf.4d8a5fbf8218f061ebf5bd5b7ba4a317.jpg` -> `12` detections  
+  ![0-359 example](assets/exp001_baseline/qualitative/0-359_png.rf.4d8a5fbf8218f061ebf5bd5b7ba4a317.jpg)
+- `139_png.rf.71f20bb3f1178a853173ca96b0742a34.jpg` -> `18` detections  
+  ![139 example](assets/exp001_baseline/qualitative/139_png.rf.71f20bb3f1178a853173ca96b0742a34.jpg)
+- `143_png.rf.b46f10777c375e281939060849122b16.jpg` -> `14` detections  
+  ![143 example](assets/exp001_baseline/qualitative/143_png.rf.b46f10777c375e281939060849122b16.jpg)
