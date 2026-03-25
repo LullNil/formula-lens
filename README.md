@@ -155,3 +155,7 @@ Response shape:
 ```
 
 `ocr` is intentionally separate because FormulaLens only detects structure. Formula-to-text reconstruction should be performed downstream by `pix2tex` or another OCR model.
+
+## License
+
+This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
