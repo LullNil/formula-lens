@@ -3,3 +3,6 @@ weights/finetuned/*
 datasets/raw/*
 datasets/roboflow_exports/*
 datasets/prepared/*
+third_party/YOLOX/
+__pycache__/
+.venvs/

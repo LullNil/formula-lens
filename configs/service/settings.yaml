@@ -1,0 +1,20 @@
+service:
+  host: 0.0.0.0
+  port: 8000
+
+model:
+  onnx_path: weights/finetuned/formula_lens_v1.onnx
+  input_size: [416, 416]
+  score_threshold: 0.25
+  nms_threshold: 0.45
+
+classes:
+  - block
+  - denominator
+  - exponent
+  - numerator
+  - system_row
+  - text
+
+downstream:
+  ocr: pix2tex
