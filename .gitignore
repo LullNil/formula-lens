@@ -1,0 +1,5 @@
+weights/pretrained/*
+weights/finetuned/*
+datasets/raw/*
+datasets/roboflow_exports/*
+datasets/prepared/*
