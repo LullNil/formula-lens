@@ -6,8 +6,20 @@ from typing import Iterable
 
 import cv2
 import numpy as np
-import torch
 from PIL import Image
+
+try:
+    import onnxruntime as ort
+except ModuleNotFoundError:  # pragma: no cover - optional backend
+    ort = None
+
+try:
+    import torch
+except ModuleNotFoundError:  # pragma: no cover - optional backend
+    torch = None
+
+from .schemas import BoundingBox, Detection, InferenceResult
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 YOLOX_ROOT = PROJECT_ROOT / "third_party" / "YOLOX"
@@ -17,16 +29,13 @@ if str(PROJECT_ROOT) not in sys.path:
 if str(YOLOX_ROOT) not in sys.path:
     sys.path.insert(0, str(YOLOX_ROOT))
 
-from configs.train.yolox_nano import Exp
-from .schemas import BoundingBox, Detection, InferenceResult
-from yolox.data.data_augment import ValTransform
-from yolox.utils import postprocess
 
-
-DEFAULT_EXP_FILE = PROJECT_ROOT / "configs" / "train" / "yolox_nano.py"
 DEFAULT_CHECKPOINT_PATH = PROJECT_ROOT / "weights" / "finetuned" / "yolox_nano" / "best_ckpt.pth"
+DEFAULT_ONNX_PATH = PROJECT_ROOT / "weights" / "finetuned" / "v1" / "formulalens_yolox_nano_v1.0.0.onnx"
+DEFAULT_EXP_FILE = PROJECT_ROOT / "configs" / "train" / "yolox_nano.py"
 DEFAULT_SCORE_THRESHOLD = 0.25
 DEFAULT_NMS_THRESHOLD = 0.45
+DEFAULT_INPUT_SIZE = (416, 416)
 DEFAULT_CLASS_NAMES = (
     "block",
     "denominator",
@@ -45,12 +54,14 @@ DEFAULT_COLORS = (
 )
 
 
-def _resolve_device(device: str | None) -> torch.device:
+def _resolve_device(device: str | None) -> str:
     if device in (None, "auto"):
-        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    if device == "cuda" and not torch.cuda.is_available():
-        return torch.device("cpu")
-    return torch.device(device)
+        if torch is not None and torch.cuda.is_available():
+            return "cuda"
+        return "cpu"
+    if device == "cuda" and (torch is None or not torch.cuda.is_available()):
+        return "cpu"
+    return device
 
 
 def _load_bgr_image(image: str | Path | np.ndarray | Image.Image) -> tuple[np.ndarray, str | None]:
@@ -75,36 +86,78 @@ def _load_bgr_image(image: str | Path | np.ndarray | Image.Image) -> tuple[np.nd
     raise TypeError(f"Unsupported image type: {type(image)!r}")
 
 
+def _preprocess_image(img: np.ndarray, input_size: tuple[int, int]) -> tuple[np.ndarray, float]:
+    padded = np.ones((input_size[0], input_size[1], 3), dtype=np.uint8) * 114
+    ratio = min(input_size[0] / img.shape[0], input_size[1] / img.shape[1])
+    resized = cv2.resize(
+        img,
+        (int(img.shape[1] * ratio), int(img.shape[0] * ratio)),
+        interpolation=cv2.INTER_LINEAR,
+    ).astype(np.uint8)
+    padded[: resized.shape[0], : resized.shape[1]] = resized
+    chw = padded.transpose(2, 0, 1).astype(np.float32)
+    return np.ascontiguousarray(chw), float(ratio)
+
+
 class FormulaLensPredictor:
     def __init__(
         self,
-        checkpoint_path: str | Path = DEFAULT_CHECKPOINT_PATH,
+        checkpoint_path: str | Path | None = None,
         exp_file: str | Path = DEFAULT_EXP_FILE,
         device: str | None = "auto",
         score_threshold: float = DEFAULT_SCORE_THRESHOLD,
         nms_threshold: float = DEFAULT_NMS_THRESHOLD,
         fp16: bool = False,
-        legacy: bool = False,
+        input_size: tuple[int, int] | None = None,
+        class_names: tuple[str, ...] | list[str] | None = None,
     ) -> None:
-        self.checkpoint_path = Path(checkpoint_path)
+        selected_path = Path(checkpoint_path) if checkpoint_path is not None else (
+            DEFAULT_ONNX_PATH if DEFAULT_ONNX_PATH.is_file() else DEFAULT_CHECKPOINT_PATH
+        )
+        self.model_path = selected_path
         self.exp_file = Path(exp_file)
         self.device = _resolve_device(device)
-        self.fp16 = fp16 and self.device.type == "cuda"
+        self.fp16 = fp16 and self.device == "cuda"
+        self.score_threshold = float(score_threshold)
+        self.nms_threshold = float(nms_threshold)
+        self.class_names = tuple(class_names or DEFAULT_CLASS_NAMES)
+        self.num_classes = len(self.class_names)
+        self.test_size = tuple(input_size or DEFAULT_INPUT_SIZE)
 
-        if not self.checkpoint_path.is_file():
-            raise FileNotFoundError(f"Checkpoint not found: {self.checkpoint_path}")
+        if not self.model_path.is_file():
+            raise FileNotFoundError(f"Model file not found: {self.model_path}")
+
+        self.backend = "onnxruntime" if self.model_path.suffix == ".onnx" else "torch"
+        if self.backend == "onnxruntime":
+            self._load_onnx_session()
+        else:
+            self._load_torch_model()
+
+    def _load_onnx_session(self) -> None:
+        if ort is None:
+            raise RuntimeError("onnxruntime is required to load ONNX models.")
+
+        providers = ["CPUExecutionProvider"]
+        self.session = ort.InferenceSession(str(self.model_path), providers=providers)
+        self.input_name = self.session.get_inputs()[0].name
+
+    def _load_torch_model(self) -> None:
+        if torch is None:
+            raise RuntimeError("torch is required to load PyTorch checkpoints.")
         if not self.exp_file.is_file():
             raise FileNotFoundError(f"Exp file not found: {self.exp_file}")
 
+        from configs.train.yolox_nano import Exp
+
         self.exp = Exp()
-        self.exp.test_conf = float(score_threshold)
-        self.exp.nmsthre = float(nms_threshold)
-        self.class_names = tuple(getattr(self.exp, "class_names", DEFAULT_CLASS_NAMES))
+        self.class_names = tuple(getattr(self.exp, "class_names", self.class_names))
         self.num_classes = int(self.exp.num_classes)
         self.test_size = tuple(self.exp.test_size)
+        self.score_threshold = float(self.score_threshold or self.exp.test_conf)
+        self.nms_threshold = float(self.nms_threshold or self.exp.nmsthre)
 
         self.model = self.exp.get_model()
-        checkpoint = torch.load(self.checkpoint_path, map_location="cpu", weights_only=False)
+        checkpoint = torch.load(self.model_path, map_location="cpu", weights_only=False)
         state_dict = checkpoint["model"] if isinstance(checkpoint, dict) and "model" in checkpoint else checkpoint
         self.model.load_state_dict(state_dict)
         self.model.to(self.device)
@@ -112,58 +165,79 @@ class FormulaLensPredictor:
         if self.fp16:
             self.model.half()
 
-        self.preproc = ValTransform(legacy=legacy)
+    def _run_model(self, batch: np.ndarray) -> np.ndarray:
+        if self.backend == "onnxruntime":
+            outputs = self.session.run(None, {self.input_name: batch})
+            return np.asarray(outputs[0])
 
-    def predict(self, image: str | Path | np.ndarray | Image.Image) -> InferenceResult:
-        raw_bgr, image_path = _load_bgr_image(image)
-        image_height, image_width = raw_bgr.shape[:2]
-        ratio = min(self.test_size[0] / image_height, self.test_size[1] / image_width)
-
-        processed, _ = self.preproc(raw_bgr, None, self.test_size)
-        tensor = torch.from_numpy(processed).unsqueeze(0).to(self.device)
+        tensor = torch.from_numpy(batch).to(self.device)
         tensor = tensor.float()
         if self.fp16:
             tensor = tensor.half()
 
         with torch.no_grad():
             outputs = self.model(tensor)
-            outputs = postprocess(
-                outputs,
-                self.num_classes,
-                conf_thre=self.exp.test_conf,
-                nms_thre=self.exp.nmsthre,
-                class_agnostic=True,
+        if isinstance(outputs, (tuple, list)):
+            outputs = outputs[0]
+        return outputs.detach().cpu().numpy()
+
+    def _decode_predictions(
+        self,
+        predictions: np.ndarray,
+        ratio: float,
+        image_width: int,
+        image_height: int,
+    ) -> list[Detection]:
+        detections: list[Detection] = []
+        rows = predictions[0]
+
+        for row in rows:
+            object_conf = float(row[4])
+            class_scores = row[5 : 5 + self.num_classes]
+            class_id = int(np.argmax(class_scores))
+            class_conf = float(class_scores[class_id])
+            score = object_conf * class_conf
+            if score < self.score_threshold:
+                continue
+
+            cx, cy, width, height = [float(value) for value in row[:4]]
+            x1 = (cx - width * 0.5) / ratio
+            y1 = (cy - height * 0.5) / ratio
+            x2 = (cx + width * 0.5) / ratio
+            y2 = (cy + height * 0.5) / ratio
+
+            x1 = float(np.clip(x1, 0, image_width))
+            y1 = float(np.clip(y1, 0, image_height))
+            x2 = float(np.clip(x2, 0, image_width))
+            y2 = float(np.clip(y2, 0, image_height))
+            if x2 <= x1 or y2 <= y1:
+                continue
+
+            detections.append(
+                Detection(
+                    class_id=class_id,
+                    label=self.class_names[class_id],
+                    score=score,
+                    bbox=BoundingBox(x1=x1, y1=y1, x2=x2, y2=y2),
+                )
             )
 
-        detections: list[Detection] = []
-        output = outputs[0]
-        if output is not None:
-            output = output.detach().cpu().numpy()
-            output[:, 0:4] /= ratio
+        return sorted(detections, key=lambda item: item.score, reverse=True)
 
-            ordered_rows = sorted(output, key=lambda row: float(row[4] * row[5]), reverse=True)
-            for row in ordered_rows:
-                class_id = int(row[6])
-                score = float(row[4] * row[5])
-                x1 = float(np.clip(row[0], 0, image_width))
-                y1 = float(np.clip(row[1], 0, image_height))
-                x2 = float(np.clip(row[2], 0, image_width))
-                y2 = float(np.clip(row[3], 0, image_height))
-                detections.append(
-                    Detection(
-                        class_id=class_id,
-                        label=self.class_names[class_id],
-                        score=score,
-                        bbox=BoundingBox(x1=x1, y1=y1, x2=x2, y2=y2),
-                    )
-                )
+    def predict(self, image: str | Path | np.ndarray | Image.Image) -> InferenceResult:
+        raw_bgr, image_path = _load_bgr_image(image)
+        image_height, image_width = raw_bgr.shape[:2]
+        processed, ratio = _preprocess_image(raw_bgr, self.test_size)
+        batch = np.expand_dims(processed, axis=0)
+        predictions = self._run_model(batch)
+        detections = self._decode_predictions(predictions, ratio, image_width, image_height)
 
         return InferenceResult(
-            checkpoint_path=str(self.checkpoint_path),
+            checkpoint_path=str(self.model_path),
             image_path=image_path,
             image_width=image_width,
             image_height=image_height,
-            resize_ratio=float(ratio),
+            resize_ratio=ratio,
             detections=detections,
         )
 

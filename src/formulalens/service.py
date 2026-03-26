@@ -14,7 +14,7 @@ from fastapi.responses import Response
 from PIL import Image
 
 from .confidence import compute_confidence_breakdown
-from .inference import DEFAULT_CHECKPOINT_PATH, FormulaLensPredictor
+from .inference import DEFAULT_CHECKPOINT_PATH, DEFAULT_ONNX_PATH, FormulaLensPredictor
 from .postprocess import postprocess_detections
 from .routing import choose_routing
 from .schemas import BadCaseResponse, DetectionResponse, InferenceResult, RouteResponse
@@ -23,9 +23,11 @@ from .schemas import BadCaseResponse, DetectionResponse, InferenceResult, RouteR
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SETTINGS_PATH = PROJECT_ROOT / "configs" / "service" / "settings.yaml"
 BAD_CASES_ROOT = PROJECT_ROOT / "experiments" / "bad_cases"
-MODEL_VERSION = "formula_lens_v1"
 
-app = FastAPI(title="FormulaLens", version=MODEL_VERSION)
+
+def get_model_version() -> str:
+    settings = load_service_settings()
+    return os.getenv("FORMULALENS_MODEL_VERSION", settings.get("model", {}).get("model_version", "v1"))
 
 
 async def _read_upload_image(image: UploadFile) -> Image.Image:
@@ -45,18 +47,28 @@ def load_service_settings() -> dict:
     return {}
 
 
+app = FastAPI(title="FormulaLens", version=get_model_version())
+
+
 @lru_cache(maxsize=1)
 def get_predictor() -> FormulaLensPredictor:
     settings = load_service_settings()
     model_settings = settings.get("model", {})
-    configured_checkpoint = model_settings.get("checkpoint_path", str(DEFAULT_CHECKPOINT_PATH))
-    checkpoint_path = Path(os.getenv("FORMULALENS_CHECKPOINT", configured_checkpoint))
+    configured_path = model_settings.get("onnx_path", str(DEFAULT_ONNX_PATH))
+    fallback_checkpoint = model_settings.get("checkpoint_path", str(DEFAULT_CHECKPOINT_PATH))
+    model_path = Path(os.getenv("FORMULALENS_MODEL_PATH", configured_path))
+    if not model_path.is_file():
+        model_path = Path(os.getenv("FORMULALENS_CHECKPOINT", fallback_checkpoint))
     device = os.getenv("FORMULALENS_DEVICE", "cpu")
+    class_names = tuple(settings.get("classes", ()))
+    input_size = tuple(model_settings.get("input_size", [416, 416]))
     return FormulaLensPredictor(
-        checkpoint_path=checkpoint_path,
+        checkpoint_path=model_path,
         device=device,
         score_threshold=float(model_settings.get("score_threshold", 0.25)),
         nms_threshold=float(model_settings.get("nms_threshold", 0.45)),
+        input_size=input_size,
+        class_names=class_names,
     )
 
 
@@ -65,8 +77,8 @@ def _detect_from_image(image: Image.Image):
     raw_result = predictor.predict(image)
     processed = postprocess_detections(
         raw_result.detections,
-        score_threshold=float(predictor.exp.test_conf),
-        iou_threshold=float(predictor.exp.nmsthre),
+        score_threshold=float(predictor.score_threshold),
+        iou_threshold=float(predictor.nms_threshold),
     )
     confidence = compute_confidence_breakdown(processed, raw_result.image_width, raw_result.image_height)
     return predictor, raw_result, processed, confidence
@@ -80,7 +92,7 @@ async def detect(image: UploadFile = File(...)) -> DetectionResponse:
         ok=True,
         detections=detections,
         global_confidence=confidence.global_confidence,
-        model_version=MODEL_VERSION,
+        model_version=get_model_version(),
         confidence_breakdown=confidence,
     )
 
@@ -106,7 +118,7 @@ async def route(
         reason=reason,
         detections=detections,
         global_confidence=confidence.global_confidence,
-        model_version=MODEL_VERSION,
+        model_version=get_model_version(),
         confidence_breakdown=confidence,
     )
 

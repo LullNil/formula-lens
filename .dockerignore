@@ -1,0 +1,8 @@
+.git
+.venvs
+__pycache__
+.pytest_cache
+datasets
+experiments/assets
+experiments/bad_cases
+weights
