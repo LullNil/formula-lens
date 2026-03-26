@@ -261,24 +261,34 @@ Response:
 ```json
 {
   "ok": true,
+  "bbox_format": "xyxy",
   "detections": [
     {
       "class_id": 3,
       "class": "numerator",
-      "score": 0.93,
+      "score": 0.936,
       "bbox": [12.0, 8.0, 64.0, 31.0]
     }
   ],
   "global_confidence": 0.91,
-  "model_version": "v1",
+  "confidence_level": "high",
+  "structure_type": "fraction",
+  "model_version": "v1.0.0",
   "confidence_breakdown": {
     "global_confidence": 0.91,
     "base_score": 0.94,
     "geometry_penalty": 0.01,
-    "combination_penalty": 0.02
+    "combination_penalty": 0.02,
+    "detection_count": 2,
+    "class_distribution": {
+      "denominator": 1,
+      "numerator": 1
+    }
   }
 }
 ```
+
+`bbox_format = "xyxy"` means each box is `[x1, y1, x2, y2]`.
 
 ### `POST /route`
 
@@ -295,14 +305,22 @@ Response:
   "ok": true,
   "decision": "use_formula_lens",
   "reason": "Structural detections are confident enough to override pix2tex.",
+  "bbox_format": "xyxy",
   "detections": [],
   "global_confidence": 0.87,
-  "model_version": "v1",
+  "confidence_level": "high",
+  "structure_type": "fraction",
+  "model_version": "v1.0.0",
   "confidence_breakdown": {
     "global_confidence": 0.87,
     "base_score": 0.9,
     "geometry_penalty": 0.01,
-    "combination_penalty": 0.02
+    "combination_penalty": 0.02,
+    "detection_count": 2,
+    "class_distribution": {
+      "denominator": 1,
+      "numerator": 1
+    }
   }
 }
 ```

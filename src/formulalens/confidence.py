@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from itertools import combinations
 
 from .schemas import ConfidenceBreakdown, ConfidenceLevel, Detection
@@ -40,6 +41,8 @@ def compute_confidence_breakdown(
             base_score=0.0,
             geometry_penalty=0.0,
             combination_penalty=0.0,
+            detection_count=0,
+            class_distribution={},
         )
 
     image_area = float(max(1, image_width * image_height))
@@ -66,12 +69,15 @@ def compute_confidence_breakdown(
     geometry_penalty = _clamp(geometry_penalty)
     combination_penalty = _clamp(combination_penalty)
     global_confidence = _clamp(base_score - geometry_penalty - combination_penalty)
+    class_distribution = dict(sorted(Counter(labels).items()))
 
     return ConfidenceBreakdown(
         global_confidence=global_confidence,
         base_score=_clamp(base_score),
         geometry_penalty=geometry_penalty,
         combination_penalty=combination_penalty,
+        detection_count=len(detections),
+        class_distribution=class_distribution,
     )
 
 
@@ -85,3 +91,20 @@ def get_confidence_level(score: float) -> ConfidenceLevel:
     if score > 0.6:
         return ConfidenceLevel.MEDIUM
     return ConfidenceLevel.LOW
+
+
+def infer_structure_type(detections: list[Detection]) -> str:
+    labels = {detection.label for detection in detections}
+    if "numerator" in labels and "denominator" in labels:
+        return "fraction"
+    if "system_row" in labels:
+        return "system"
+    if "exponent" in labels:
+        return "power"
+    if labels == {"text"}:
+        return "text"
+    if labels == {"block"}:
+        return "block"
+    if not labels:
+        return "unknown"
+    return "mixed"

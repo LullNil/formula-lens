@@ -16,7 +16,7 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
 from PIL import Image
 
-from .confidence import compute_confidence_breakdown, get_confidence_level
+from .confidence import compute_confidence_breakdown, get_confidence_level, infer_structure_type
 from .inference import DEFAULT_CHECKPOINT_PATH, DEFAULT_ONNX_PATH, FormulaLensPredictor
 from .postprocess import postprocess_detections
 from .routing import choose_routing
@@ -119,6 +119,7 @@ async def detect(image: UploadFile = File(...)) -> DetectionResponse:
         detections=detections,
         global_confidence=confidence.global_confidence,
         confidence_level=get_confidence_level(confidence.global_confidence),
+        structure_type=infer_structure_type(detections),
         model_version=get_model_version(),
         confidence_breakdown=confidence,
     )
@@ -146,6 +147,7 @@ async def route(
         detections=detections,
         global_confidence=confidence.global_confidence,
         confidence_level=get_confidence_level(confidence.global_confidence),
+        structure_type=infer_structure_type(detections),
         model_version=get_model_version(),
         confidence_breakdown=confidence,
     )

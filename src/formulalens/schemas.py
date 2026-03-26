@@ -65,6 +65,10 @@ class RoutingDecision(str, Enum):
     USE_HEURISTICS = "use_heuristics"
 
 
+class BBoxFormat(str, Enum):
+    XYXY = "xyxy"
+
+
 class ConfidenceLevel(str, Enum):
     LOW = "low"
     MEDIUM = "medium"
@@ -78,6 +82,8 @@ class ConfidenceBreakdown(BaseModel):
     base_score: float = Field(ge=0.0, le=1.0)
     geometry_penalty: float = Field(ge=0.0, le=1.0)
     combination_penalty: float = Field(ge=0.0, le=1.0)
+    detection_count: int = Field(ge=0)
+    class_distribution: dict[str, int] = Field(default_factory=dict)
 
     @field_serializer("global_confidence", "base_score", "geometry_penalty", "combination_penalty")
     def serialize_confidence(self, value: float) -> float:
@@ -88,9 +94,11 @@ class DetectionResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     ok: bool = True
+    bbox_format: BBoxFormat = BBoxFormat.XYXY
     detections: list[Detection] = Field(default_factory=list)
     global_confidence: float = Field(ge=0.0, le=1.0)
     confidence_level: ConfidenceLevel
+    structure_type: str
     model_version: str
     confidence_breakdown: ConfidenceBreakdown
 
@@ -105,9 +113,11 @@ class RouteResponse(BaseModel):
     ok: bool = True
     decision: RoutingDecision
     reason: str
+    bbox_format: BBoxFormat = BBoxFormat.XYXY
     detections: list[Detection] = Field(default_factory=list)
     global_confidence: float = Field(ge=0.0, le=1.0)
     confidence_level: ConfidenceLevel
+    structure_type: str
     model_version: str
     confidence_breakdown: ConfidenceBreakdown
 
