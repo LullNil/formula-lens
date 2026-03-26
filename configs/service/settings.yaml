@@ -3,6 +3,7 @@ service:
   port: 8000
 
 model:
+  checkpoint_path: weights/finetuned/yolox_nano/best_ckpt.pth
   onnx_path: weights/finetuned/formula_lens_v1.onnx
   input_size: [416, 416]
   score_threshold: 0.25
