@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from itertools import combinations
 
-from .schemas import ConfidenceBreakdown, Detection
+from .schemas import ConfidenceBreakdown, ConfidenceLevel, Detection
 
 
 def _clamp(value: float) -> float:
@@ -77,3 +77,11 @@ def compute_confidence_breakdown(
 
 def compute_global_confidence(detections: list[Detection], image_width: int, image_height: int) -> float:
     return compute_confidence_breakdown(detections, image_width, image_height).global_confidence
+
+
+def get_confidence_level(score: float) -> ConfidenceLevel:
+    if score > 0.8:
+        return ConfidenceLevel.HIGH
+    if score > 0.6:
+        return ConfidenceLevel.MEDIUM
+    return ConfidenceLevel.LOW

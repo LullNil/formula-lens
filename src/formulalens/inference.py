@@ -249,6 +249,8 @@ class FormulaLensPredictor:
         image: str | Path | np.ndarray | Image.Image,
         result: InferenceResult | None = None,
         output_path: str | Path | None = None,
+        show_labels: bool = True,
+        line_thickness: int = 2,
     ) -> np.ndarray:
         rendered, _ = _load_bgr_image(image)
         current_result = result or self.predict(image)
@@ -259,34 +261,35 @@ class FormulaLensPredictor:
             y1 = int(round(detection.bbox.y1))
             x2 = int(round(detection.bbox.x2))
             y2 = int(round(detection.bbox.y2))
-            label = f"{detection.label} {detection.score:.2f}"
 
-            cv2.rectangle(rendered, (x1, y1), (x2, y2), color, 2)
-            (text_width, text_height), baseline = cv2.getTextSize(
-                label,
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.45,
-                1,
-            )
-            text_top = max(0, y1 - text_height - baseline - 4)
-            text_bottom = text_top + text_height + baseline + 4
-            cv2.rectangle(
-                rendered,
-                (x1, text_top),
-                (x1 + text_width + 6, text_bottom),
-                color,
-                thickness=-1,
-            )
-            cv2.putText(
-                rendered,
-                label,
-                (x1 + 3, text_bottom - baseline - 2),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.45,
-                (255, 255, 255),
-                1,
-                cv2.LINE_AA,
-            )
+            cv2.rectangle(rendered, (x1, y1), (x2, y2), color, line_thickness)
+            if show_labels:
+                label = f"{detection.label} {detection.score:.2f}"
+                (text_width, text_height), baseline = cv2.getTextSize(
+                    label,
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.45,
+                    1,
+                )
+                text_top = max(0, y1 - text_height - baseline - 4)
+                text_bottom = text_top + text_height + baseline + 4
+                cv2.rectangle(
+                    rendered,
+                    (x1, text_top),
+                    (x1 + text_width + 6, text_bottom),
+                    color,
+                    thickness=-1,
+                )
+                cv2.putText(
+                    rendered,
+                    label,
+                    (x1 + 3, text_bottom - baseline - 2),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.45,
+                    (255, 255, 255),
+                    1,
+                    cv2.LINE_AA,
+                )
 
         if output_path is not None:
             destination = Path(output_path)

@@ -227,6 +227,13 @@ Then run:
 docker compose up --build
 ```
 
+By default the service is published on host port `18080`, so the API is available at `http://localhost:18080`.
+If you need a different host port, override it with `FORMULALENS_HOST_PORT`, for example:
+
+```bash
+FORMULALENS_HOST_PORT=18081 docker compose up --build
+```
+
 On the first start:
 
 - the container is built from code only
@@ -322,7 +329,16 @@ Response:
 
 Input: image upload
 
-Response: `image/jpeg` with drawn bounding boxes for fast visual inspection.
+Response: `image/jpeg` with thin color-coded bounding boxes for fast visual inspection. Labels are intentionally not drawn on the image so they do not overlap the formula itself.
+
+Color legend for `/debug/detect`:
+
+- `block`: ochre
+- `denominator`: green
+- `exponent`: bright blue
+- `numerator`: red
+- `system_row`: rose
+- `text`: cyan
 
 ## Deployment summary
 

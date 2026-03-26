@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
+import time
+from contextlib import asynccontextmanager
 from functools import lru_cache
 from io import BytesIO
 from pathlib import Path
@@ -13,7 +16,7 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
 from PIL import Image
 
-from .confidence import compute_confidence_breakdown
+from .confidence import compute_confidence_breakdown, get_confidence_level
 from .inference import DEFAULT_CHECKPOINT_PATH, DEFAULT_ONNX_PATH, FormulaLensPredictor
 from .postprocess import postprocess_detections
 from .routing import choose_routing
@@ -23,6 +26,7 @@ from .schemas import BadCaseResponse, DetectionResponse, InferenceResult, RouteR
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SETTINGS_PATH = PROJECT_ROOT / "configs" / "service" / "settings.yaml"
 BAD_CASES_ROOT = PROJECT_ROOT / "experiments" / "bad_cases"
+logger = logging.getLogger("formulalens.service")
 
 
 def get_model_version() -> str:
@@ -47,7 +51,27 @@ def load_service_settings() -> dict:
     return {}
 
 
-app = FastAPI(title="FormulaLens", version=get_model_version())
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    logger.info("Service startup: model_version=%s settings_path=%s", get_model_version(), SETTINGS_PATH)
+    started_at = time.perf_counter()
+    predictor = get_predictor()
+    logger.info(
+        "Model ready: backend=%s device=%s path=%s input_size=%s score_threshold=%.2f nms_threshold=%.2f classes=%s load_time_ms=%.1f",
+        predictor.backend,
+        predictor.device,
+        predictor.model_path,
+        predictor.test_size,
+        predictor.score_threshold,
+        predictor.nms_threshold,
+        ",".join(predictor.class_names),
+        (time.perf_counter() - started_at) * 1000.0,
+    )
+    yield
+    logger.info("Service shutdown")
+
+
+app = FastAPI(title="FormulaLens", version=get_model_version(), lifespan=lifespan)
 
 
 @lru_cache(maxsize=1)
@@ -58,7 +82,9 @@ def get_predictor() -> FormulaLensPredictor:
     fallback_checkpoint = model_settings.get("checkpoint_path", str(DEFAULT_CHECKPOINT_PATH))
     model_path = Path(os.getenv("FORMULALENS_MODEL_PATH", configured_path))
     if not model_path.is_file():
-        model_path = Path(os.getenv("FORMULALENS_CHECKPOINT", fallback_checkpoint))
+        fallback_path = Path(os.getenv("FORMULALENS_CHECKPOINT", fallback_checkpoint))
+        logger.warning("Configured model path missing: %s. Falling back to %s", model_path, fallback_path)
+        model_path = fallback_path
     device = os.getenv("FORMULALENS_DEVICE", "cpu")
     class_names = tuple(settings.get("classes", ()))
     input_size = tuple(model_settings.get("input_size", [416, 416]))
@@ -92,6 +118,7 @@ async def detect(image: UploadFile = File(...)) -> DetectionResponse:
         ok=True,
         detections=detections,
         global_confidence=confidence.global_confidence,
+        confidence_level=get_confidence_level(confidence.global_confidence),
         model_version=get_model_version(),
         confidence_breakdown=confidence,
     )
@@ -118,6 +145,7 @@ async def route(
         reason=reason,
         detections=detections,
         global_confidence=confidence.global_confidence,
+        confidence_level=get_confidence_level(confidence.global_confidence),
         model_version=get_model_version(),
         confidence_breakdown=confidence,
     )
@@ -148,6 +176,7 @@ async def save_bad_case(
         "original_filename": image.filename,
     }
     (target_dir / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    logger.info("Bad case saved: case_id=%s reason=%s dir=%s", case_id, reason, target_dir)
 
     return BadCaseResponse(ok=True, case_id=case_id, saved_dir=str(target_dir))
 
@@ -164,7 +193,7 @@ async def debug_detect(image: UploadFile = File(...)) -> Response:
         resize_ratio=raw_result.resize_ratio,
         detections=detections,
     )
-    rendered = predictor.render(parsed_image, result=rendered_result)
+    rendered = predictor.render(parsed_image, result=rendered_result, show_labels=False, line_thickness=1)
 
     ok, encoded = cv2.imencode(".jpg", rendered)
     if not ok:

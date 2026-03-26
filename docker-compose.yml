@@ -12,7 +12,7 @@ services:
       FORMULALENS_RELEASE_REPO: ${FORMULALENS_RELEASE_REPO:-LullNil/formula-lens}
       FORMULALENS_PORT: 8000
     ports:
-      - "8000:8000"
+      - "${FORMULALENS_HOST_PORT:-18080}:8000"
     volumes:
       - formulalens_weights:/app/weights/finetuned
       - formulalens_bad_cases:/app/experiments/bad_cases

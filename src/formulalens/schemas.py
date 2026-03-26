@@ -2,7 +2,19 @@ from __future__ import annotations
 
 from enum import Enum
 
-from pydantic import BaseModel, ConfigDict, Field, model_serializer
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_serializer
+
+
+def _round_confidence(value: float) -> float:
+    return float(round(value, 2))
+
+
+def _round_score(value: float) -> float:
+    return float(round(value, 3))
+
+
+def _round_bbox(value: float) -> float:
+    return float(round(value, 2))
 
 
 class BoundingBox(BaseModel):
@@ -15,7 +27,12 @@ class BoundingBox(BaseModel):
 
     @model_serializer(mode="plain")
     def serialize(self) -> list[float]:
-        return [self.x1, self.y1, self.x2, self.y2]
+        return [
+            _round_bbox(self.x1),
+            _round_bbox(self.y1),
+            _round_bbox(self.x2),
+            _round_bbox(self.y2),
+        ]
 
 
 class Detection(BaseModel):
@@ -25,6 +42,10 @@ class Detection(BaseModel):
     label: str = Field(serialization_alias="class")
     score: float = Field(ge=0.0, le=1.0)
     bbox: BoundingBox
+
+    @field_serializer("score")
+    def serialize_score(self, value: float) -> float:
+        return _round_score(value)
 
 
 class InferenceResult(BaseModel):
@@ -44,6 +65,12 @@ class RoutingDecision(str, Enum):
     USE_HEURISTICS = "use_heuristics"
 
 
+class ConfidenceLevel(str, Enum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
 class ConfidenceBreakdown(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -52,6 +79,10 @@ class ConfidenceBreakdown(BaseModel):
     geometry_penalty: float = Field(ge=0.0, le=1.0)
     combination_penalty: float = Field(ge=0.0, le=1.0)
 
+    @field_serializer("global_confidence", "base_score", "geometry_penalty", "combination_penalty")
+    def serialize_confidence(self, value: float) -> float:
+        return _round_confidence(value)
+
 
 class DetectionResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -59,8 +90,13 @@ class DetectionResponse(BaseModel):
     ok: bool = True
     detections: list[Detection] = Field(default_factory=list)
     global_confidence: float = Field(ge=0.0, le=1.0)
+    confidence_level: ConfidenceLevel
     model_version: str
     confidence_breakdown: ConfidenceBreakdown
+
+    @field_serializer("global_confidence")
+    def serialize_global_confidence(self, value: float) -> float:
+        return _round_confidence(value)
 
 
 class RouteResponse(BaseModel):
@@ -71,8 +107,13 @@ class RouteResponse(BaseModel):
     reason: str
     detections: list[Detection] = Field(default_factory=list)
     global_confidence: float = Field(ge=0.0, le=1.0)
+    confidence_level: ConfidenceLevel
     model_version: str
     confidence_breakdown: ConfidenceBreakdown
+
+    @field_serializer("global_confidence")
+    def serialize_global_confidence(self, value: float) -> float:
+        return _round_confidence(value)
 
 
 class BadCaseResponse(BaseModel):

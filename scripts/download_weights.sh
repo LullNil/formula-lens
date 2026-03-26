@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+log() {
+    printf '[%s] [weights] %s\n' "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" "$*"
+}
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MODE="${1:-pretrained}"
 MODEL_VERSION="${FORMULALENS_MODEL_VERSION:-${MODEL_VERSION:-v1.0.0}}"
@@ -34,9 +38,12 @@ esac
 
 mkdir -p "$(dirname "$TARGET_PATH")"
 if [[ -f "$TARGET_PATH" ]]; then
-    echo "Weights already exist at $TARGET_PATH"
+    log "Weights already exist at $TARGET_PATH"
     exit 0
 fi
 
+log "Downloading mode=$MODE version=$MODEL_VERSION"
+log "Source: $SOURCE_URL"
+log "Target: $TARGET_PATH"
 curl -fL "$SOURCE_URL" -o "$TARGET_PATH"
-echo "Downloaded weights to $TARGET_PATH"
+log "Downloaded weights to $TARGET_PATH"
