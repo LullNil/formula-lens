@@ -68,7 +68,7 @@ The runtime serves CPU inference through ONNX Runtime and starts from a versione
 This is the simplest way to run the service:
 
 ```bash
-docker compose up --build
+docker compose up -d --build
 ```
 
 By default the API is available at `http://localhost:18080`.

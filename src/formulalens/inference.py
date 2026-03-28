@@ -54,6 +54,29 @@ DEFAULT_COLORS = (
 )
 
 
+def _composite_pil_on_white(image: Image.Image) -> Image.Image:
+    if image.mode in {"RGBA", "LA"}:
+        rgba = image.convert("RGBA")
+        background = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
+        return Image.alpha_composite(background, rgba).convert("RGB")
+    if image.mode == "P" and "transparency" in image.info:
+        rgba = image.convert("RGBA")
+        background = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
+        return Image.alpha_composite(background, rgba).convert("RGB")
+    return image.convert("RGB")
+
+
+def _composite_bgra_on_white(image: np.ndarray) -> np.ndarray:
+    if image.ndim != 3 or image.shape[2] != 4:
+        raise ValueError(f"Expected BGRA image, got shape={image.shape}")
+
+    bgr = image[:, :, :3].astype(np.float32)
+    alpha = (image[:, :, 3:4].astype(np.float32) / 255.0)
+    background = np.full_like(bgr, 255.0)
+    composited = bgr * alpha + background * (1.0 - alpha)
+    return np.ascontiguousarray(composited.astype(np.uint8))
+
+
 def _resolve_device(device: str | None) -> str:
     if device in (None, "auto"):
         if torch is not None and torch.cuda.is_available():
@@ -67,13 +90,21 @@ def _resolve_device(device: str | None) -> str:
 def _load_bgr_image(image: str | Path | np.ndarray | Image.Image) -> tuple[np.ndarray, str | None]:
     if isinstance(image, (str, Path)):
         image_path = Path(image)
-        bgr = cv2.imread(str(image_path))
-        if bgr is None:
+        raw = cv2.imread(str(image_path), cv2.IMREAD_UNCHANGED)
+        if raw is None:
             raise FileNotFoundError(f"Unable to read image: {image_path}")
+        if raw.ndim == 2:
+            bgr = cv2.cvtColor(raw, cv2.COLOR_GRAY2BGR)
+        elif raw.ndim == 3 and raw.shape[2] == 4:
+            bgr = _composite_bgra_on_white(raw)
+        elif raw.ndim == 3 and raw.shape[2] == 3:
+            bgr = np.ascontiguousarray(raw.copy())
+        else:
+            raise ValueError(f"Unsupported image shape: {raw.shape}")
         return bgr, str(image_path)
 
     if isinstance(image, Image.Image):
-        rgb = image.convert("RGB")
+        rgb = _composite_pil_on_white(image)
         return cv2.cvtColor(np.array(rgb), cv2.COLOR_RGB2BGR), None
 
     if isinstance(image, np.ndarray):
@@ -81,22 +112,26 @@ def _load_bgr_image(image: str | Path | np.ndarray | Image.Image) -> tuple[np.nd
             return cv2.cvtColor(image, cv2.COLOR_GRAY2BGR), None
         if image.ndim == 3 and image.shape[2] == 3:
             return np.ascontiguousarray(image.copy()), None
+        if image.ndim == 3 and image.shape[2] == 4:
+            return _composite_bgra_on_white(image), None
         raise ValueError(f"Unsupported ndarray image shape: {image.shape}")
 
     raise TypeError(f"Unsupported image type: {type(image)!r}")
 
 
-def _preprocess_image(img: np.ndarray, input_size: tuple[int, int]) -> tuple[np.ndarray, float]:
-    padded = np.ones((input_size[0], input_size[1], 3), dtype=np.uint8) * 114
+def _preprocess_image(img: np.ndarray, input_size: tuple[int, int]) -> tuple[np.ndarray, float, int, int]:
+    padded = np.full((input_size[0], input_size[1], 3), 255, dtype=np.uint8)
     ratio = min(input_size[0] / img.shape[0], input_size[1] / img.shape[1])
     resized = cv2.resize(
         img,
         (int(img.shape[1] * ratio), int(img.shape[0] * ratio)),
         interpolation=cv2.INTER_LINEAR,
     ).astype(np.uint8)
-    padded[: resized.shape[0], : resized.shape[1]] = resized
+    pad_y = (input_size[0] - resized.shape[0]) // 2
+    pad_x = (input_size[1] - resized.shape[1]) // 2
+    padded[pad_y : pad_y + resized.shape[0], pad_x : pad_x + resized.shape[1]] = resized
     chw = padded.transpose(2, 0, 1).astype(np.float32)
-    return np.ascontiguousarray(chw), float(ratio)
+    return np.ascontiguousarray(chw), float(ratio), int(pad_x), int(pad_y)
 
 
 class FormulaLensPredictor:
@@ -185,6 +220,8 @@ class FormulaLensPredictor:
         self,
         predictions: np.ndarray,
         ratio: float,
+        pad_x: int,
+        pad_y: int,
         image_width: int,
         image_height: int,
     ) -> list[Detection]:
@@ -201,10 +238,10 @@ class FormulaLensPredictor:
                 continue
 
             cx, cy, width, height = [float(value) for value in row[:4]]
-            x1 = (cx - width * 0.5) / ratio
-            y1 = (cy - height * 0.5) / ratio
-            x2 = (cx + width * 0.5) / ratio
-            y2 = (cy + height * 0.5) / ratio
+            x1 = (cx - width * 0.5 - pad_x) / ratio
+            y1 = (cy - height * 0.5 - pad_y) / ratio
+            x2 = (cx + width * 0.5 - pad_x) / ratio
+            y2 = (cy + height * 0.5 - pad_y) / ratio
 
             x1 = float(np.clip(x1, 0, image_width))
             y1 = float(np.clip(y1, 0, image_height))
@@ -227,10 +264,10 @@ class FormulaLensPredictor:
     def predict(self, image: str | Path | np.ndarray | Image.Image) -> InferenceResult:
         raw_bgr, image_path = _load_bgr_image(image)
         image_height, image_width = raw_bgr.shape[:2]
-        processed, ratio = _preprocess_image(raw_bgr, self.test_size)
+        processed, ratio, pad_x, pad_y = _preprocess_image(raw_bgr, self.test_size)
         batch = np.expand_dims(processed, axis=0)
         predictions = self._run_model(batch)
-        detections = self._decode_predictions(predictions, ratio, image_width, image_height)
+        detections = self._decode_predictions(predictions, ratio, pad_x, pad_y, image_width, image_height)
 
         return InferenceResult(
             checkpoint_path=str(self.model_path),

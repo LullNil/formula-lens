@@ -3,7 +3,9 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import numpy as np
 import pytest
+from PIL import Image
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -54,3 +56,34 @@ def test_render_writes_visualization(predictor, tmp_path):
     assert output_path.is_file()
     assert rendered.shape[0] == result.image_height
     assert rendered.shape[1] == result.image_width
+
+
+def test_load_bgr_image_composites_transparent_pil_on_white():
+    from formulalens.inference import _load_bgr_image
+
+    image = Image.new("RGBA", (2, 1), (0, 0, 0, 0))
+    image.putpixel((1, 0), (255, 0, 0, 255))
+
+    bgr, image_path = _load_bgr_image(image)
+
+    assert image_path is None
+    assert bgr.shape == (1, 2, 3)
+    assert bgr[0, 0].tolist() == [255, 255, 255]
+    assert bgr[0, 1].tolist() == [0, 0, 255]
+
+
+def test_preprocess_image_uses_centered_white_letterbox():
+    from formulalens.inference import _preprocess_image
+
+    image = np.zeros((100, 200, 3), dtype=np.uint8)
+
+    chw, ratio, pad_x, pad_y = _preprocess_image(image, (416, 416))
+    padded = chw.transpose(1, 2, 0).astype(np.uint8)
+
+    assert ratio == pytest.approx(2.08)
+    assert pad_x == 0
+    assert pad_y == 104
+    assert padded.shape == (416, 416, 3)
+    assert np.all(padded[:pad_y] == 255)
+    assert np.all(padded[pad_y : pad_y + 208] == 0)
+    assert np.all(padded[pad_y + 208 :] == 255)

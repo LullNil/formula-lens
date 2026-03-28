@@ -39,7 +39,9 @@ async def _read_upload_image(image: UploadFile) -> Image.Image:
     if not payload:
         raise HTTPException(status_code=400, detail="Empty image upload.")
     try:
-        return Image.open(BytesIO(payload)).convert("RGB")
+        parsed = Image.open(BytesIO(payload))
+        parsed.load()
+        return parsed
     except Exception as exc:  # pragma: no cover - FastAPI boundary
         raise HTTPException(status_code=400, detail=f"Unable to decode image: {exc}") from exc
 
@@ -165,7 +167,7 @@ async def save_bad_case(
     target_dir.mkdir(parents=True, exist_ok=True)
 
     image_path = target_dir / "input.jpg"
-    parsed_image.save(image_path, format="JPEG", quality=95)
+    parsed_image.convert("RGB").save(image_path, format="JPEG", quality=95)
 
     try:
         payload = json.loads(intermediate_outputs)
