@@ -13,11 +13,10 @@ COPY requirements/service.txt /app/requirements/service.txt
 RUN pip install --no-cache-dir -r /app/requirements/service.txt
 
 COPY src /app/src
-COPY scripts/download_weights.sh /app/scripts/download_weights.sh
-COPY scripts/start_service.sh /app/scripts/start_service.sh
+COPY scripts /app/scripts
 COPY configs/service/settings.yaml /app/configs/service/settings.yaml
 
-RUN chmod +x /app/scripts/download_weights.sh /app/scripts/start_service.sh
+RUN chmod +x /app/scripts/*.sh
 
 EXPOSE 8000
 

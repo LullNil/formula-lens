@@ -4,9 +4,13 @@ import sys
 from pathlib import Path
 from typing import Iterable
 
-import cv2
 import numpy as np
 from PIL import Image
+
+try:
+    import cv2
+except ModuleNotFoundError:  # pragma: no cover - optional backend
+    cv2 = None
 
 try:
     import onnxruntime as ort
@@ -19,6 +23,7 @@ except ModuleNotFoundError:  # pragma: no cover - optional backend
     torch = None
 
 from .schemas import BoundingBox, Detection, InferenceResult
+from .utils.image import composite_pil_on_white
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -54,18 +59,6 @@ DEFAULT_COLORS = (
 )
 
 
-def _composite_pil_on_white(image: Image.Image) -> Image.Image:
-    if image.mode in {"RGBA", "LA"}:
-        rgba = image.convert("RGBA")
-        background = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
-        return Image.alpha_composite(background, rgba).convert("RGB")
-    if image.mode == "P" and "transparency" in image.info:
-        rgba = image.convert("RGBA")
-        background = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
-        return Image.alpha_composite(background, rgba).convert("RGB")
-    return image.convert("RGB")
-
-
 def _composite_bgra_on_white(image: np.ndarray) -> np.ndarray:
     if image.ndim != 3 or image.shape[2] != 4:
         raise ValueError(f"Expected BGRA image, got shape={image.shape}")
@@ -75,6 +68,35 @@ def _composite_bgra_on_white(image: np.ndarray) -> np.ndarray:
     background = np.full_like(bgr, 255.0)
     composited = bgr * alpha + background * (1.0 - alpha)
     return np.ascontiguousarray(composited.astype(np.uint8))
+
+
+def _require_cv2(feature: str) -> None:
+    if cv2 is None:
+        raise RuntimeError(
+            f"OpenCV is required for {feature}. Install dependencies from requirements/service.txt."
+        )
+
+
+def _rgb_to_bgr(image: np.ndarray) -> np.ndarray:
+    return np.ascontiguousarray(image[:, :, ::-1])
+
+
+def _bgr_to_rgb(image: np.ndarray) -> np.ndarray:
+    return np.ascontiguousarray(image[:, :, ::-1])
+
+
+def _gray_to_bgr(image: np.ndarray) -> np.ndarray:
+    return np.repeat(image[:, :, None], 3, axis=2).astype(np.uint8, copy=False)
+
+
+def _resize_bgr_image(image: np.ndarray, size: tuple[int, int]) -> np.ndarray:
+    width, height = size
+    if cv2 is not None:
+        return cv2.resize(image, (width, height), interpolation=cv2.INTER_LINEAR).astype(np.uint8)
+
+    pil_image = Image.fromarray(_bgr_to_rgb(image))
+    resized = pil_image.resize((width, height), resample=Image.Resampling.BILINEAR)
+    return _rgb_to_bgr(np.array(resized, dtype=np.uint8))
 
 
 def _resolve_device(device: str | None) -> str:
@@ -90,26 +112,32 @@ def _resolve_device(device: str | None) -> str:
 def _load_bgr_image(image: str | Path | np.ndarray | Image.Image) -> tuple[np.ndarray, str | None]:
     if isinstance(image, (str, Path)):
         image_path = Path(image)
-        raw = cv2.imread(str(image_path), cv2.IMREAD_UNCHANGED)
-        if raw is None:
-            raise FileNotFoundError(f"Unable to read image: {image_path}")
-        if raw.ndim == 2:
-            bgr = cv2.cvtColor(raw, cv2.COLOR_GRAY2BGR)
-        elif raw.ndim == 3 and raw.shape[2] == 4:
-            bgr = _composite_bgra_on_white(raw)
-        elif raw.ndim == 3 and raw.shape[2] == 3:
-            bgr = np.ascontiguousarray(raw.copy())
+        if cv2 is not None:
+            raw = cv2.imread(str(image_path), cv2.IMREAD_UNCHANGED)
+            if raw is None:
+                raise FileNotFoundError(f"Unable to read image: {image_path}")
+            if raw.ndim == 2:
+                bgr = cv2.cvtColor(raw, cv2.COLOR_GRAY2BGR)
+            elif raw.ndim == 3 and raw.shape[2] == 4:
+                bgr = _composite_bgra_on_white(raw)
+            elif raw.ndim == 3 and raw.shape[2] == 3:
+                bgr = np.ascontiguousarray(raw.copy())
+            else:
+                raise ValueError(f"Unsupported image shape: {raw.shape}")
         else:
-            raise ValueError(f"Unsupported image shape: {raw.shape}")
+            with Image.open(image_path) as pil_image:
+                pil_image.load()
+                rgb = composite_pil_on_white(pil_image)
+            bgr = _rgb_to_bgr(np.array(rgb, dtype=np.uint8))
         return bgr, str(image_path)
 
     if isinstance(image, Image.Image):
-        rgb = _composite_pil_on_white(image)
-        return cv2.cvtColor(np.array(rgb), cv2.COLOR_RGB2BGR), None
+        rgb = composite_pil_on_white(image)
+        return _rgb_to_bgr(np.array(rgb, dtype=np.uint8)), None
 
     if isinstance(image, np.ndarray):
         if image.ndim == 2:
-            return cv2.cvtColor(image, cv2.COLOR_GRAY2BGR), None
+            return _gray_to_bgr(image), None
         if image.ndim == 3 and image.shape[2] == 3:
             return np.ascontiguousarray(image.copy()), None
         if image.ndim == 3 and image.shape[2] == 4:
@@ -122,10 +150,9 @@ def _load_bgr_image(image: str | Path | np.ndarray | Image.Image) -> tuple[np.nd
 def _preprocess_image(img: np.ndarray, input_size: tuple[int, int]) -> tuple[np.ndarray, float, int, int]:
     padded = np.full((input_size[0], input_size[1], 3), 255, dtype=np.uint8)
     ratio = min(input_size[0] / img.shape[0], input_size[1] / img.shape[1])
-    resized = cv2.resize(
+    resized = _resize_bgr_image(
         img,
         (int(img.shape[1] * ratio), int(img.shape[0] * ratio)),
-        interpolation=cv2.INTER_LINEAR,
     ).astype(np.uint8)
     pad_y = (input_size[0] - resized.shape[0]) // 2
     pad_x = (input_size[1] - resized.shape[1]) // 2
@@ -289,6 +316,7 @@ class FormulaLensPredictor:
         show_labels: bool = True,
         line_thickness: int = 2,
     ) -> np.ndarray:
+        _require_cv2("rendering detections")
         rendered, _ = _load_bgr_image(image)
         current_result = result or self.predict(image)
 
