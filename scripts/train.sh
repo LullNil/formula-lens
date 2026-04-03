@@ -6,6 +6,8 @@ PYTHON_BIN="${PYTHON_BIN:-python3}"
 YOLOX_DIR="${YOLOX_DIR:-$ROOT_DIR/third_party/YOLOX}"
 EXP_FILE="${EXP_FILE:-$ROOT_DIR/configs/train/yolox_nano.py}"
 WEIGHTS_PATH="${WEIGHTS_PATH:-$ROOT_DIR/weights/pretrained/yolox_nano.pth}"
+SOURCE_ROOT="${SOURCE_ROOT:-$ROOT_DIR/datasets/roboflow_exports/formulas_coco_v1}"
+PREPARED_DATASET_DIR="${PREPARED_DATASET_DIR:-$ROOT_DIR/datasets/prepared/formulas_coco_v1}"
 GPUS="${GPUS:-1}"
 BATCH_SIZE="${BATCH_SIZE:-8}"
 LOGGER="${LOGGER:-tensorboard}"
@@ -28,14 +30,42 @@ if ! "$PYTHON_BIN" -c "import torch; assert torch.cuda.is_available()"; then
     exit 1
 fi
 
-"$PYTHON_BIN" "$ROOT_DIR/scripts/prepare_dataset.py" --source-root "$ROOT_DIR/datasets/roboflow_exports/formulas_coco_v1"
+"$PYTHON_BIN" "$ROOT_DIR/scripts/prepare_dataset.py" \
+    --source-root "$SOURCE_ROOT" \
+    --output-dir "$PREPARED_DATASET_DIR"
 
 cd "$YOLOX_DIR"
 PYTHONPATH="$ROOT_DIR/src:$YOLOX_DIR:${PYTHONPATH:-}" \
-    "$PYTHON_BIN" tools/train.py \
-    -f "$EXP_FILE" \
-    -d "$GPUS" \
-    -b "$BATCH_SIZE" \
-    -c "$WEIGHTS_PATH" \
-    -l "$LOGGER" \
-    "${@:1}"
+    "$PYTHON_BIN" - "${@:1}" <<PY
+import runpy
+import sys
+from pathlib import Path
+
+import torch
+
+tool_path = Path("$YOLOX_DIR") / "tools" / "train.py"
+original_load = torch.load
+
+
+def patched_load(*args, **kwargs):
+    kwargs.setdefault("weights_only", False)
+    return original_load(*args, **kwargs)
+
+
+torch.load = patched_load
+sys.argv = [
+    str(tool_path),
+    "-f",
+    "$EXP_FILE",
+    "-d",
+    "$GPUS",
+    "-b",
+    "$BATCH_SIZE",
+    "-c",
+    "$WEIGHTS_PATH",
+    "-l",
+    "$LOGGER",
+    *sys.argv[1:],
+]
+runpy.run_path(str(tool_path), run_name="__main__")
+PY

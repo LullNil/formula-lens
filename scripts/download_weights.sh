@@ -7,11 +7,11 @@ log() {
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MODE="${1:-pretrained}"
-MODEL_VERSION="${FORMULALENS_MODEL_VERSION:-${MODEL_VERSION:-v1.0.0}}"
+MODEL_VERSION="${FORMULALENS_MODEL_VERSION:-${MODEL_VERSION:-v2.0.0}}"
 YOLOX_NANO_URL="${YOLOX_NANO_URL:-https://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.1rc0/yolox_nano.pth}"
 SERVICE_RELEASE_REPO="${FORMULALENS_RELEASE_REPO:-LullNil/formula-lens}"
 SERVICE_FILENAME="${FORMULALENS_MODEL_FILENAME:-formulalens_yolox_nano_${MODEL_VERSION}.onnx}"
-SERVICE_TARGET="${2:-$ROOT_DIR/weights/finetuned/v1/$SERVICE_FILENAME}"
+SERVICE_TARGET="${2:-$ROOT_DIR/weights/finetuned/v2/$SERVICE_FILENAME}"
 
 case "$MODE" in
     pretrained)
@@ -22,6 +22,8 @@ case "$MODE" in
         TARGET_PATH="$SERVICE_TARGET"
         if [[ -n "${FORMULALENS_MODEL_URL:-}" ]]; then
             SOURCE_URL="$FORMULALENS_MODEL_URL"
+        elif [[ "$MODEL_VERSION" == "v2.0.0" && "$SERVICE_FILENAME" == "formulalens_yolox_nano_v2.0.0.onnx" ]]; then
+            SOURCE_URL="https://github.com/LullNil/formula-lens/releases/download/v2.0.0/formulalens_yolox_nano_v2.0.0.onnx"
         elif [[ -n "$SERVICE_RELEASE_REPO" ]]; then
             SOURCE_URL="https://github.com/$SERVICE_RELEASE_REPO/releases/download/$MODEL_VERSION/$SERVICE_FILENAME"
         else

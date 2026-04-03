@@ -100,3 +100,16 @@ def test_infer_structure_type():
     ]
 
     assert infer_structure_type(detections) == "fraction"
+
+
+def test_infer_structure_type_for_whole_part():
+    detections = [
+        Detection(
+            class_id=6,
+            label="whole_part",
+            score=0.91,
+            bbox=BoundingBox(x1=1, y1=1, x2=5, y2=5),
+        ),
+    ]
+
+    assert infer_structure_type(detections) == "whole_part"

@@ -7,3 +7,4 @@ datasets/pseudo_labels/*
 third_party/YOLOX/
 __pycache__/
 .venvs/
+.codex

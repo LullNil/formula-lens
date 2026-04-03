@@ -57,3 +57,21 @@ def test_choose_pix2tex_when_formula_lens_is_weaker():
 
     assert decision == RoutingDecision.USE_PIX2TEX
     assert confidence.global_confidence < 0.6
+
+
+def test_choose_formula_lens_for_whole_part_structure():
+    detections = [
+        make_detection("whole_part", 6, 0.88, (15, 12, 90, 70)),
+    ]
+
+    decision, reason, confidence = choose_routing(
+        detections=detections,
+        image_width=120,
+        image_height=100,
+        pix2tex_output="x",
+        pix2tex_score=0.62,
+    )
+
+    assert decision == RoutingDecision.USE_FORMULA_LENS
+    assert confidence.global_confidence >= 0.65
+    assert "Structural detections" in reason

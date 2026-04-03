@@ -4,7 +4,7 @@ from .confidence import compute_confidence_breakdown
 from .schemas import ConfidenceBreakdown, Detection, RoutingDecision
 
 
-STRUCTURAL_LABELS = {"numerator", "denominator", "exponent", "system_row"}
+STRUCTURAL_LABELS = {"numerator", "denominator", "exponent", "system_row", "whole_part"}
 
 
 def choose_routing(

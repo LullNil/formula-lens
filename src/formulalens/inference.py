@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import sys
 from pathlib import Path
 from typing import Iterable
@@ -36,7 +37,7 @@ if str(YOLOX_ROOT) not in sys.path:
 
 
 DEFAULT_CHECKPOINT_PATH = PROJECT_ROOT / "weights" / "finetuned" / "yolox_nano" / "best_ckpt.pth"
-DEFAULT_ONNX_PATH = PROJECT_ROOT / "weights" / "finetuned" / "v1" / "formulalens_yolox_nano_v1.0.0.onnx"
+DEFAULT_ONNX_PATH = PROJECT_ROOT / "weights" / "finetuned" / "v2" / "formulalens_yolox_nano_v2.0.0.onnx"
 DEFAULT_EXP_FILE = PROJECT_ROOT / "configs" / "train" / "yolox_nano.py"
 DEFAULT_SCORE_THRESHOLD = 0.25
 DEFAULT_NMS_THRESHOLD = 0.45
@@ -48,6 +49,7 @@ DEFAULT_CLASS_NAMES = (
     "numerator",
     "system_row",
     "text",
+    "whole_part",
 )
 DEFAULT_COLORS = (
     (39, 125, 161),
@@ -56,6 +58,7 @@ DEFAULT_COLORS = (
     (229, 57, 53),
     (126, 87, 194),
     (0, 172, 193),
+    (141, 110, 99),
 )
 
 
@@ -161,11 +164,27 @@ def _preprocess_image(img: np.ndarray, input_size: tuple[int, int]) -> tuple[np.
     return np.ascontiguousarray(chw), float(ratio), int(pad_x), int(pad_y)
 
 
+def _load_exp_class(exp_file: Path):
+    if not exp_file.is_file():
+        raise FileNotFoundError(f"Exp file not found: {exp_file}")
+
+    module_name = f"formulalens_exp_{exp_file.stem}"
+    spec = importlib.util.spec_from_file_location(module_name, exp_file)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Unable to load exp module from {exp_file}")
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    if not hasattr(module, "Exp"):
+        raise AttributeError(f"Exp class not found in {exp_file}")
+    return module.Exp
+
+
 class FormulaLensPredictor:
     def __init__(
         self,
         checkpoint_path: str | Path | None = None,
-        exp_file: str | Path = DEFAULT_EXP_FILE,
+        exp_file: str | Path | None = DEFAULT_EXP_FILE,
         device: str | None = "auto",
         score_threshold: float = DEFAULT_SCORE_THRESHOLD,
         nms_threshold: float = DEFAULT_NMS_THRESHOLD,
@@ -177,7 +196,7 @@ class FormulaLensPredictor:
             DEFAULT_ONNX_PATH if DEFAULT_ONNX_PATH.is_file() else DEFAULT_CHECKPOINT_PATH
         )
         self.model_path = selected_path
-        self.exp_file = Path(exp_file)
+        self.exp_file = Path(exp_file) if exp_file is not None else DEFAULT_EXP_FILE
         self.device = _resolve_device(device)
         self.fp16 = fp16 and self.device == "cuda"
         self.score_threshold = float(score_threshold)
@@ -206,12 +225,9 @@ class FormulaLensPredictor:
     def _load_torch_model(self) -> None:
         if torch is None:
             raise RuntimeError("torch is required to load PyTorch checkpoints.")
-        if not self.exp_file.is_file():
-            raise FileNotFoundError(f"Exp file not found: {self.exp_file}")
 
-        from configs.train.yolox_nano import Exp
-
-        self.exp = Exp()
+        exp_cls = _load_exp_class(self.exp_file)
+        self.exp = exp_cls()
         self.class_names = tuple(getattr(self.exp, "class_names", self.class_names))
         self.num_classes = int(self.exp.num_classes)
         self.test_size = tuple(self.exp.test_size)

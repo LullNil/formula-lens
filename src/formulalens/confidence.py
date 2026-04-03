@@ -101,6 +101,8 @@ def infer_structure_type(detections: list[Detection]) -> str:
         return "system"
     if "exponent" in labels:
         return "power"
+    if labels == {"whole_part"}:
+        return "whole_part"
     if labels == {"text"}:
         return "text"
     if labels == {"block"}:

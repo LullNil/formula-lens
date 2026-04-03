@@ -3,9 +3,10 @@ service:
   port: 8000
 
 model:
-  model_version: v1.0.0
-  checkpoint_path: weights/finetuned/yolox_nano/best_ckpt.pth
-  onnx_path: weights/finetuned/v1/formulalens_yolox_nano_v1.0.0.onnx
+  model_version: v2.0.0
+  exp_file: configs/train/yolox_nano_v2.py
+  checkpoint_path: weights/finetuned/yolox_nano_v2/best_ckpt.pth
+  onnx_path: weights/finetuned/v2/formulalens_yolox_nano_v2.0.0.onnx
   input_size: [416, 416]
   score_threshold: 0.25
   nms_threshold: 0.45
@@ -17,6 +18,7 @@ classes:
   - numerator
   - system_row
   - text
+  - whole_part
 
 downstream:
   ocr: pix2tex

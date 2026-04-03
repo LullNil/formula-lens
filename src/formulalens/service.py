@@ -82,6 +82,7 @@ def get_predictor() -> FormulaLensPredictor:
     model_settings = settings.get("model", {})
     configured_path = model_settings.get("onnx_path", str(DEFAULT_ONNX_PATH))
     fallback_checkpoint = model_settings.get("checkpoint_path", str(DEFAULT_CHECKPOINT_PATH))
+    exp_file = model_settings.get("exp_file")
     model_path = Path(os.getenv("FORMULALENS_MODEL_PATH", configured_path))
     if not model_path.is_file():
         fallback_path = Path(os.getenv("FORMULALENS_CHECKPOINT", fallback_checkpoint))
@@ -92,6 +93,7 @@ def get_predictor() -> FormulaLensPredictor:
     input_size = tuple(model_settings.get("input_size", [416, 416]))
     return FormulaLensPredictor(
         checkpoint_path=model_path,
+        exp_file=exp_file,
         device=device,
         score_threshold=float(model_settings.get("score_threshold", 0.25)),
         nms_threshold=float(model_settings.get("nms_threshold", 0.45)),

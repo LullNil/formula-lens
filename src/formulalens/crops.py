@@ -42,7 +42,7 @@ def crop_detections(
 ) -> list[CropRegion]:
     raw = _load_bgr_image(image)
     height, width = raw.shape[:2]
-    allowed = labels or {"numerator", "denominator", "system_row", "block", "text"}
+    allowed = labels or {"numerator", "denominator", "system_row", "block", "text", "whole_part"}
 
     crops: list[CropRegion] = []
     for detection in detections:

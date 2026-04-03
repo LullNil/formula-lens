@@ -6,10 +6,42 @@ log() {
 }
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-MODEL_VERSION="${FORMULALENS_MODEL_VERSION:-v1.0.0}"
-MODEL_DIR="${FORMULALENS_MODEL_DIR:-$ROOT_DIR/weights/finetuned/v1}"
-MODEL_FILENAME="${FORMULALENS_MODEL_FILENAME:-formulalens_yolox_nano_${MODEL_VERSION}.onnx}"
-MODEL_PATH="${FORMULALENS_MODEL_PATH:-$MODEL_DIR/$MODEL_FILENAME}"
+SETTINGS_PATH="${FORMULALENS_SETTINGS_PATH:-$ROOT_DIR/configs/service/settings.yaml}"
+SETTINGS_MODEL_VERSION="$(
+    FORMULALENS_SETTINGS_PATH="$SETTINGS_PATH" python3 - <<'PY'
+from pathlib import Path
+import os
+
+import yaml
+
+settings_path = Path(os.environ["FORMULALENS_SETTINGS_PATH"])
+if settings_path.is_file():
+    settings = yaml.safe_load(settings_path.read_text(encoding="utf-8")) or {}
+    print(settings.get("model", {}).get("model_version", "v2.0.0"))
+else:
+    print("v2.0.0")
+PY
+)"
+SETTINGS_MODEL_PATH="$(
+    FORMULALENS_SETTINGS_PATH="$SETTINGS_PATH" python3 - <<'PY'
+from pathlib import Path
+import os
+
+import yaml
+
+root_dir = Path.cwd()
+settings_path = Path(os.environ["FORMULALENS_SETTINGS_PATH"])
+if settings_path.is_file():
+    settings = yaml.safe_load(settings_path.read_text(encoding="utf-8")) or {}
+    print(settings.get("model", {}).get("onnx_path", "weights/finetuned/v2/formulalens_yolox_nano_v2.0.0.onnx"))
+else:
+    print("weights/finetuned/v2/formulalens_yolox_nano_v2.0.0.onnx")
+PY
+)"
+MODEL_VERSION="${FORMULALENS_MODEL_VERSION:-$SETTINGS_MODEL_VERSION}"
+MODEL_PATH="${FORMULALENS_MODEL_PATH:-$ROOT_DIR/$SETTINGS_MODEL_PATH}"
+MODEL_DIR="${FORMULALENS_MODEL_DIR:-$(dirname "$MODEL_PATH")}"
+MODEL_FILENAME="${FORMULALENS_MODEL_FILENAME:-$(basename "$MODEL_PATH")}"
 HOST="${FORMULALENS_HOST:-0.0.0.0}"
 PORT="${FORMULALENS_PORT:-8000}"
 
@@ -26,6 +58,7 @@ else
 fi
 
 export FORMULALENS_MODEL_PATH="$MODEL_PATH"
+export FORMULALENS_MODEL_VERSION="$MODEL_VERSION"
 
 log "Starting uvicorn on ${HOST}:${PORT}"
 exec uvicorn formulalens.service:app --app-dir "$ROOT_DIR/src" --host "$HOST" --port "$PORT"

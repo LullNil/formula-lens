@@ -12,12 +12,13 @@ FormulaLens does not perform OCR. Formula-to-text reconstruction is expected to 
 - `numerator`
 - `system_row`
 - `text`
+- `whole_part`
 
 ## Train
 
-Training uses YOLOX and requires CUDA. Before training, place a Roboflow COCO export under `datasets/roboflow_exports/formulas_coco_v1/` with `train/` and optionally `valid/` and `test/`.
+Training uses YOLOX and requires CUDA. Before training, place a Roboflow COCO export under `datasets/roboflow_exports/formulas_coco_v2/` with `train/` and optionally `valid/` and `test/`.
 
-`scripts/train.sh` automatically runs `scripts/prepare_dataset.py`, which rewrites the export into the YOLOX-friendly layout under `datasets/prepared/formulas_coco_v1/`.
+`scripts/train.sh` automatically runs `scripts/prepare_dataset.py`, which rewrites the export into the YOLOX-friendly layout under `datasets/prepared/formulas_coco_v2/`.
 
 If YOLOX is not present yet:
 
@@ -31,6 +32,10 @@ Set up the training environment, activate it, download the pretrained YOLOX-Nano
 bash scripts/setup_train_env.sh cu124
 source .venvs/formulalens-train-cu124/bin/activate
 bash scripts/download_weights.sh
+EXP_FILE=$PWD/configs/train/yolox_nano_v2.py \
+WEIGHTS_PATH=$PWD/weights/finetuned/yolox_nano/best_ckpt.pth \
+SOURCE_ROOT=$PWD/datasets/roboflow_exports/formulas_coco_v2 \
+PREPARED_DATASET_DIR=$PWD/datasets/prepared/formulas_coco_v2 \
 bash scripts/train.sh --fp16
 ```
 
@@ -39,8 +44,9 @@ If your machine uses a different CUDA stack, use `cu121` instead of `cu124`.
 Artifacts:
 
 - pretrained checkpoint: `weights/pretrained/yolox_nano.pth`
-- fine-tuned checkpoints: `weights/finetuned/yolox_nano/`
-- main exp file: `configs/train/yolox_nano.py`
+- base checkpoint: `weights/finetuned/yolox_nano/best_ckpt.pth`
+- fine-tuned checkpoints: `weights/finetuned/yolox_nano_v2/`
+- main exp file: `configs/train/yolox_nano_v2.py`
 
 ## Export weights
 
@@ -48,13 +54,17 @@ Export the best checkpoint to ONNX:
 
 ```bash
 source .venvs/formulalens-train-cu124/bin/activate
+EXP_FILE=$PWD/configs/train/yolox_nano_v2.py \
+CKPT_PATH=$PWD/weights/finetuned/yolox_nano_v2/best_ckpt.pth \
+MODEL_VERSION=v2.0.0 \
+OUTPUT_DIR=$PWD/weights/finetuned/v2 \
 bash scripts/export_onnx.sh
 ```
 
 Default output:
 
 ```text
-weights/finetuned/v1/formulalens_yolox_nano_v1.0.0.onnx
+weights/finetuned/v2/formulalens_yolox_nano_v2.0.0.onnx
 ```
 
 You can override `MODEL_VERSION`, `OUTPUT_DIR`, `OUTPUT_PATH`, or `CKPT_PATH` through environment variables.
@@ -76,8 +86,8 @@ By default the API is available at `http://localhost:18080`.
 Useful overrides:
 
 - `FORMULALENS_HOST_PORT=18081 docker compose up --build`
-- `FORMULALENS_MODEL_VERSION=v1.0.0 docker compose up --build`
-- `FORMULALENS_MODEL_URL=... docker compose up --build`
+- `FORMULALENS_MODEL_VERSION=v2.0.0 docker compose up --build`
+- `FORMULALENS_MODEL_URL=https://github.com/LullNil/formula-lens/releases/download/v2.0.0/formulalens_yolox_nano_v2.0.0.onnx docker compose up --build`
 - `FORMULALENS_RELEASE_REPO=owner/repo docker compose up --build`
 
 ### Local

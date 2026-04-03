@@ -5,10 +5,10 @@ services:
       dockerfile: docker/Dockerfile.service
     environment:
       FORMULALENS_DEVICE: cpu
-      FORMULALENS_MODEL_VERSION: v1.0.0
-      FORMULALENS_MODEL_DIR: /app/weights/finetuned/v1
-      FORMULALENS_MODEL_PATH: /app/weights/finetuned/v1/formulalens_yolox_nano_v1.0.0.onnx
-      FORMULALENS_MODEL_URL: ${FORMULALENS_MODEL_URL:-}
+      FORMULALENS_MODEL_VERSION: v2.0.0
+      FORMULALENS_MODEL_DIR: /app/weights/finetuned/v2
+      FORMULALENS_MODEL_PATH: /app/weights/finetuned/v2/formulalens_yolox_nano_v2.0.0.onnx
+      FORMULALENS_MODEL_URL: ${FORMULALENS_MODEL_URL:-https://github.com/LullNil/formula-lens/releases/download/v2.0.0/formulalens_yolox_nano_v2.0.0.onnx}
       FORMULALENS_RELEASE_REPO: ${FORMULALENS_RELEASE_REPO:-LullNil/formula-lens}
       FORMULALENS_PORT: 8000
     ports:
