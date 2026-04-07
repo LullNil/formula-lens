@@ -6,6 +6,7 @@ services:
     environment:
       FORMULALENS_DEVICE: cpu
       FORMULALENS_MODEL_VERSION: v2.0.0
+      FORMULALENS_RENDER_SIMILARITY_ENABLED: ${FORMULALENS_RENDER_SIMILARITY_ENABLED:-0}
       FORMULALENS_MODEL_DIR: /app/weights/finetuned/v2
       FORMULALENS_MODEL_PATH: /app/weights/finetuned/v2/formulalens_yolox_nano_v2.0.0.onnx
       FORMULALENS_MODEL_URL: ${FORMULALENS_MODEL_URL:-https://github.com/LullNil/formula-lens/releases/download/v2.0.0/formulalens_yolox_nano_v2.0.0.onnx}

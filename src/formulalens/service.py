@@ -19,8 +19,21 @@ from PIL import Image
 from .confidence import compute_confidence_breakdown, get_confidence_level, infer_structure_type
 from .inference import DEFAULT_CHECKPOINT_PATH, DEFAULT_ONNX_PATH, FormulaLensPredictor
 from .postprocess import postprocess_detections
+from .render_similarity import (
+    DEFAULT_CANVAS_SIZE,
+    DEFAULT_DILATION_KERNEL,
+    DEFAULT_FONT_SIZE,
+    DEFAULT_PADDING,
+    compute_render_similarity,
+)
 from .routing import choose_routing
-from .schemas import BadCaseResponse, DetectionResponse, InferenceResult, RouteResponse
+from .schemas import (
+    BadCaseResponse,
+    DetectionResponse,
+    InferenceResult,
+    RenderSimilarityResponse,
+    RouteResponse,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -44,6 +57,76 @@ async def _read_upload_image(image: UploadFile) -> Image.Image:
         return parsed
     except Exception as exc:  # pragma: no cover - FastAPI boundary
         raise HTTPException(status_code=400, detail=f"Unable to decode image: {exc}") from exc
+
+
+def _env_flag(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _route_render_similarity_settings() -> dict:
+    settings = load_service_settings().get("routing", {}).get("render_similarity", {})
+    enabled = _env_flag("FORMULALENS_RENDER_SIMILARITY_ENABLED", bool(settings.get("enabled", False)))
+    return {
+        "enabled": enabled,
+        "canvas_size": tuple(settings.get("canvas_size", list(DEFAULT_CANVAS_SIZE))),
+        "font_size": int(settings.get("font_size", DEFAULT_FONT_SIZE)),
+        "padding": int(settings.get("padding", DEFAULT_PADDING)),
+        "dilation_kernel": int(settings.get("dilation_kernel", DEFAULT_DILATION_KERNEL)),
+        "min_score": float(settings.get("min_score", 0.82)),
+        "min_pix2tex_score": float(settings.get("min_pix2tex_score", 0.75)),
+        "formula_confidence_cap": float(settings.get("formula_confidence_cap", 0.78)),
+        "tie_break_score": float(settings.get("tie_break_score", 0.90)),
+    }
+
+
+def _build_render_similarity_response(
+    image: Image.Image,
+    pix2tex_output: str | None,
+) -> tuple[RenderSimilarityResponse | None, dict]:
+    settings = _route_render_similarity_settings()
+    if not settings["enabled"]:
+        return (
+            RenderSimilarityResponse(
+                enabled=False,
+                applied=False,
+                reason="Feature flag is disabled.",
+            ),
+            settings,
+        )
+
+    if not pix2tex_output or not pix2tex_output.strip():
+        return (
+            RenderSimilarityResponse(
+                enabled=True,
+                applied=False,
+                reason="pix2tex output is missing.",
+            ),
+            settings,
+        )
+
+    result = compute_render_similarity(
+        image,
+        pix2tex_output,
+        canvas_size=settings["canvas_size"],
+        font_size=settings["font_size"],
+        padding=settings["padding"],
+        dilation_kernel=settings["dilation_kernel"],
+    )
+    if not result.applied:
+        logger.warning("Render similarity skipped: %s", result.reason)
+    return (
+        RenderSimilarityResponse(
+            enabled=result.enabled,
+            applied=result.applied,
+            score=result.score,
+            renderer=result.renderer,
+            reason=result.reason,
+        ),
+        settings,
+    )
 
 
 @lru_cache(maxsize=1)
@@ -137,12 +220,18 @@ async def route(
 ) -> RouteResponse:
     parsed_image = await _read_upload_image(image)
     _, raw_result, detections, _ = _detect_from_image(parsed_image)
+    render_similarity, render_settings = _build_render_similarity_response(parsed_image, pix2tex_output)
     decision, reason, confidence = choose_routing(
         detections=detections,
         image_width=raw_result.image_width,
         image_height=raw_result.image_height,
         pix2tex_output=pix2tex_output,
         pix2tex_score=pix2tex_score,
+        render_similarity_score=render_similarity.score if render_similarity and render_similarity.applied else None,
+        render_similarity_min_score=render_settings["min_score"],
+        render_similarity_min_pix2tex_score=render_settings["min_pix2tex_score"],
+        render_similarity_formula_confidence_cap=render_settings["formula_confidence_cap"],
+        render_similarity_tie_break_score=render_settings["tie_break_score"],
     )
     return RouteResponse(
         ok=True,
@@ -154,6 +243,7 @@ async def route(
         structure_type=infer_structure_type(detections),
         model_version=get_model_version(),
         confidence_breakdown=confidence,
+        render_similarity=render_similarity,
     )
 
 

@@ -90,6 +90,22 @@ class ConfidenceBreakdown(BaseModel):
         return _round_confidence(value)
 
 
+class RenderSimilarityResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    applied: bool = False
+    score: float | None = Field(default=None, ge=0.0, le=1.0)
+    renderer: str | None = None
+    reason: str | None = None
+
+    @field_serializer("score")
+    def serialize_score(self, value: float | None) -> float | None:
+        if value is None:
+            return None
+        return _round_confidence(value)
+
+
 class DetectionResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -120,6 +136,7 @@ class RouteResponse(BaseModel):
     structure_type: str
     model_version: str
     confidence_breakdown: ConfidenceBreakdown
+    render_similarity: RenderSimilarityResponse | None = None
 
     @field_serializer("global_confidence")
     def serialize_global_confidence(self, value: float) -> float:

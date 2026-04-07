@@ -22,3 +22,15 @@ classes:
 
 downstream:
   ocr: pix2tex
+
+routing:
+  render_similarity:
+    enabled: false
+    canvas_size: [416, 416]
+    font_size: 28
+    padding: 10
+    dilation_kernel: 5
+    min_score: 0.82
+    min_pix2tex_score: 0.75
+    formula_confidence_cap: 0.78
+    tie_break_score: 0.90

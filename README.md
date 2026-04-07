@@ -103,6 +103,8 @@ bash scripts/start_service.sh
 
 By default the local service listens on `http://0.0.0.0:8000`. You can override host, port, or model path with `FORMULALENS_HOST`, `FORMULALENS_PORT`, and `FORMULALENS_MODEL_PATH`.
 
+Optional routing refinement can be enabled with `FORMULALENS_RENDER_SIMILARITY_ENABLED=1`. When enabled, `/route` tries to render `pix2tex_output`, normalize both images to the same canvas, and compare their foreground masks. If rendering fails, the request falls back to the original routing logic.
+
 ## Quick checks with curl
 
 For Docker use:
@@ -210,6 +212,8 @@ This endpoint combines FormulaLens structural detections with downstream OCR con
 - `use_pix2tex`
 - `use_heuristics`
 
+If render-similarity refinement is enabled, the response also includes a `render_similarity` block with the renderer name, whether the comparison was applied, and the similarity score when available.
+
 Response:
 
 ```json
@@ -223,6 +227,13 @@ Response:
   "confidence_level": "high",
   "structure_type": "fraction",
   "model_version": "v1.0.0",
+  "render_similarity": {
+    "enabled": true,
+    "applied": true,
+    "score": 0.91,
+    "renderer": "mathtext",
+    "reason": "Rendered pix2tex output was compared against the normalized input mask."
+  },
   "confidence_breakdown": {
     "global_confidence": 0.87,
     "base_score": 0.9,

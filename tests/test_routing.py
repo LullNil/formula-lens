@@ -75,3 +75,42 @@ def test_choose_formula_lens_for_whole_part_structure():
     assert decision == RoutingDecision.USE_FORMULA_LENS
     assert confidence.global_confidence >= 0.65
     assert "Structural detections" in reason
+
+
+def test_choose_pix2tex_when_render_similarity_is_strong():
+    detections = [
+        make_detection("block", 0, 0.72, (10, 10, 120, 90)),
+    ]
+
+    decision, reason, confidence = choose_routing(
+        detections=detections,
+        image_width=200,
+        image_height=120,
+        pix2tex_output="\\frac{x}{y}",
+        pix2tex_score=0.81,
+        render_similarity_score=0.91,
+    )
+
+    assert decision == RoutingDecision.USE_PIX2TEX
+    assert confidence.global_confidence < 0.78
+    assert "matches the source image strongly enough" in reason
+
+
+def test_keep_formula_lens_when_its_confidence_is_still_dominant():
+    detections = [
+        make_detection("numerator", 3, 0.95, (10, 10, 90, 40)),
+        make_detection("denominator", 1, 0.94, (10, 55, 90, 95)),
+    ]
+
+    decision, reason, confidence = choose_routing(
+        detections=detections,
+        image_width=120,
+        image_height=120,
+        pix2tex_output="\\frac{x}{y}",
+        pix2tex_score=0.81,
+        render_similarity_score=0.95,
+    )
+
+    assert decision == RoutingDecision.USE_FORMULA_LENS
+    assert confidence.global_confidence >= 0.78
+    assert "Structural detections" in reason
