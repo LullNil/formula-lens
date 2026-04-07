@@ -10,6 +10,9 @@ CKPT_PATH="${CKPT_PATH:-$ROOT_DIR/weights/finetuned/$EXP_NAME/best_ckpt.pth}"
 MODEL_VERSION="${MODEL_VERSION:-v1.0.0}"
 OUTPUT_DIR="${OUTPUT_DIR:-$ROOT_DIR/weights/finetuned/v1}"
 OUTPUT_PATH="${OUTPUT_PATH:-$OUTPUT_DIR/formulalens_yolox_nano_${MODEL_VERSION}.onnx}"
+ONNX_BATCH_SIZE="${ONNX_BATCH_SIZE:-1}"
+ONNX_DYNAMIC_BATCH="${ONNX_DYNAMIC_BATCH:-0}"
+ONNX_NO_SIMPLIFY="${ONNX_NO_SIMPLIFY:-$ONNX_DYNAMIC_BATCH}"
 
 if [[ ! -d "$YOLOX_DIR/yolox" ]]; then
     echo "YOLOX repo not found at $YOLOX_DIR"
@@ -51,9 +54,15 @@ sys.argv = [
     "$EXP_FILE",
     "-c",
     "$CKPT_PATH",
+    "--batch-size",
+    "$ONNX_BATCH_SIZE",
     "--output-name",
     "$OUTPUT_PATH",
     "--decode_in_inference",
 ]
+if "$ONNX_DYNAMIC_BATCH" == "1":
+    sys.argv.append("--dynamic")
+if "$ONNX_NO_SIMPLIFY" == "1":
+    sys.argv.append("--no-onnxsim")
 runpy.run_path(str(tool_path), run_name="__main__")
 PY

@@ -34,6 +34,7 @@ from .schemas import (
     DetectionResponse,
     InferenceResult,
     RenderSimilarityResponse,
+    RouteBatchResponse,
     RouteResponse,
 )
 
@@ -49,6 +50,16 @@ def get_model_version() -> str:
     return os.getenv("FORMULALENS_MODEL_VERSION", settings.get("model", {}).get("model_version", "v1"))
 
 
+def _resolve_versioned_model_path(configured_path: str | Path, model_version: str, configured_version: str) -> Path:
+    configured = Path(configured_path)
+    model_dir = Path(os.getenv("FORMULALENS_MODEL_DIR", str(configured.parent)))
+    if configured_version and configured_version in configured.name:
+        filename = configured.name.replace(configured_version, model_version, 1)
+    else:
+        filename = configured.name
+    return model_dir / filename
+
+
 async def _read_upload_image(image: UploadFile) -> Image.Image:
     payload = await image.read()
     if not payload:
@@ -59,6 +70,12 @@ async def _read_upload_image(image: UploadFile) -> Image.Image:
         return parsed
     except Exception as exc:  # pragma: no cover - FastAPI boundary
         raise HTTPException(status_code=400, detail=f"Unable to decode image: {exc}") from exc
+
+
+async def _read_upload_images(images: list[UploadFile]) -> list[Image.Image]:
+    if not images:
+        raise HTTPException(status_code=400, detail="At least one image upload is required.")
+    return [await _read_upload_image(image) for image in images]
 
 
 def _env_flag(name: str, default: bool) -> bool:
@@ -138,6 +155,47 @@ def _build_render_similarity_response(
     )
 
 
+def _parse_batch_form_field(
+    raw_value: str | None,
+    expected_length: int,
+    field_name: str,
+    *,
+    cast=None,
+) -> list:
+    if raw_value is None:
+        return [None] * expected_length
+
+    try:
+        payload = json.loads(raw_value)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail=f"{field_name} must be a JSON array.") from exc
+
+    if not isinstance(payload, list):
+        raise HTTPException(status_code=400, detail=f"{field_name} must be a JSON array.")
+    if len(payload) != expected_length:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{field_name} length must match images length ({expected_length}).",
+        )
+
+    normalized: list = []
+    for index, item in enumerate(payload):
+        if item is None:
+            normalized.append(None)
+            continue
+        if cast is None:
+            normalized.append(item)
+            continue
+        try:
+            normalized.append(cast(item))
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{field_name}[{index}] has an invalid value.",
+            ) from exc
+    return normalized
+
+
 @lru_cache(maxsize=1)
 def load_service_settings() -> dict:
     if SETTINGS_PATH.is_file():
@@ -172,10 +230,17 @@ app = FastAPI(title="FormulaLens", version=get_model_version(), lifespan=lifespa
 def get_predictor() -> FormulaLensPredictor:
     settings = load_service_settings()
     model_settings = settings.get("model", {})
+    configured_version = str(model_settings.get("model_version", "v1"))
+    model_version = get_model_version()
     configured_path = model_settings.get("onnx_path", str(DEFAULT_ONNX_PATH))
     fallback_checkpoint = model_settings.get("checkpoint_path", str(DEFAULT_CHECKPOINT_PATH))
     exp_file = model_settings.get("exp_file")
-    model_path = Path(os.getenv("FORMULALENS_MODEL_PATH", configured_path))
+    explicit_model_path = os.getenv("FORMULALENS_MODEL_PATH")
+    model_path = Path(explicit_model_path) if explicit_model_path else _resolve_versioned_model_path(
+        configured_path,
+        model_version=model_version,
+        configured_version=configured_version,
+    )
     if not model_path.is_file():
         fallback_path = Path(os.getenv("FORMULALENS_CHECKPOINT", fallback_checkpoint))
         logger.warning("Configured model path missing: %s. Falling back to %s", model_path, fallback_path)
@@ -204,6 +269,24 @@ def _detect_from_image(image: Image.Image):
     )
     confidence = compute_confidence_breakdown(processed, raw_result.image_width, raw_result.image_height)
     return predictor, raw_result, processed, confidence
+
+
+def _detect_many_from_images(images: list[Image.Image]):
+    predictor = get_predictor()
+    raw_results, batched_inference_used = predictor.predict_many_with_info(images)
+    processed_results = [
+        postprocess_detections(
+            raw_result.detections,
+            score_threshold=float(predictor.score_threshold),
+            iou_threshold=float(predictor.nms_threshold),
+        )
+        for raw_result in raw_results
+    ]
+    confidences = [
+        compute_confidence_breakdown(processed, raw_result.image_width, raw_result.image_height)
+        for raw_result, processed in zip(raw_results, processed_results)
+    ]
+    return predictor, raw_results, processed_results, confidences, batched_inference_used
 
 
 @app.post("/detect", response_model=DetectionResponse)
@@ -253,6 +336,70 @@ async def route(
         model_version=get_model_version(),
         confidence_breakdown=confidence,
         render_similarity=render_similarity,
+    )
+
+
+@app.post("/route-batch", response_model=RouteBatchResponse)
+async def route_batch(
+    images: list[UploadFile] = File(...),
+    pix2tex_outputs_json: str | None = Form(default=None),
+    pix2tex_scores_json: str | None = Form(default=None),
+) -> RouteBatchResponse:
+    parsed_images = await _read_upload_images(images)
+    pix2tex_outputs = _parse_batch_form_field(
+        pix2tex_outputs_json,
+        expected_length=len(parsed_images),
+        field_name="pix2tex_outputs_json",
+    )
+    pix2tex_scores = _parse_batch_form_field(
+        pix2tex_scores_json,
+        expected_length=len(parsed_images),
+        field_name="pix2tex_scores_json",
+        cast=float,
+    )
+
+    _, raw_results, detections_list, _, batched_inference_used = _detect_many_from_images(parsed_images)
+    route_results: list[RouteResponse] = []
+    for parsed_image, raw_result, detections, pix2tex_output, pix2tex_score in zip(
+        parsed_images,
+        raw_results,
+        detections_list,
+        pix2tex_outputs,
+        pix2tex_scores,
+    ):
+        render_similarity, render_settings = _build_render_similarity_response(parsed_image, pix2tex_output)
+        decision, reason, confidence = choose_routing(
+            detections=detections,
+            image_width=raw_result.image_width,
+            image_height=raw_result.image_height,
+            pix2tex_output=pix2tex_output,
+            pix2tex_score=pix2tex_score,
+            render_similarity_score=render_similarity.score if render_similarity and render_similarity.applied else None,
+            render_similarity_min_score=render_settings["min_score"],
+            render_similarity_min_pix2tex_score=render_settings["min_pix2tex_score"],
+            render_similarity_formula_confidence_cap=render_settings["formula_confidence_cap"],
+            render_similarity_tie_break_score=render_settings["tie_break_score"],
+        )
+        route_results.append(
+            RouteResponse(
+                ok=True,
+                decision=decision,
+                reason=reason,
+                detections=detections,
+                global_confidence=confidence.global_confidence,
+                confidence_level=get_confidence_level(confidence.global_confidence),
+                structure_type=infer_structure_type(detections),
+                model_version=get_model_version(),
+                confidence_breakdown=confidence,
+                render_similarity=render_similarity,
+            )
+        )
+
+    return RouteBatchResponse(
+        ok=True,
+        count=len(route_results),
+        batched_inference_used=batched_inference_used,
+        results=route_results,
     )
 
 

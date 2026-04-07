@@ -114,6 +114,12 @@ Run:
 bash scripts/export_onnx.sh
 ```
 
+Useful overrides:
+
+```bash
+MODEL_VERSION=v2.0.0-batch ONNX_BATCH_SIZE=8 ONNX_DYNAMIC_BATCH=1 ONNX_NO_SIMPLIFY=1 bash scripts/export_onnx.sh
+```
+
 ## `start_service.sh`
 
 Purpose: downloads the configured ONNX model if needed and starts the FastAPI/uvicorn service.

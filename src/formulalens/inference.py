@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import logging
 import sys
 from pathlib import Path
 from typing import Iterable
@@ -60,6 +61,7 @@ DEFAULT_COLORS = (
     (0, 172, 193),
     (141, 110, 99),
 )
+logger = logging.getLogger("formulalens.inference")
 
 
 def _composite_bgra_on_white(image: np.ndarray) -> np.ndarray:
@@ -220,7 +222,9 @@ class FormulaLensPredictor:
 
         providers = ["CPUExecutionProvider"]
         self.session = ort.InferenceSession(str(self.model_path), providers=providers)
-        self.input_name = self.session.get_inputs()[0].name
+        input_meta = self.session.get_inputs()[0]
+        self.input_name = input_meta.name
+        self.input_shape = tuple(input_meta.shape)
 
     def _load_torch_model(self) -> None:
         if torch is None:
@@ -259,9 +263,9 @@ class FormulaLensPredictor:
             outputs = outputs[0]
         return outputs.detach().cpu().numpy()
 
-    def _decode_predictions(
+    def _decode_prediction_rows(
         self,
-        predictions: np.ndarray,
+        rows: np.ndarray,
         ratio: float,
         pad_x: int,
         pad_y: int,
@@ -269,7 +273,6 @@ class FormulaLensPredictor:
         image_height: int,
     ) -> list[Detection]:
         detections: list[Detection] = []
-        rows = predictions[0]
 
         for row in rows:
             object_conf = float(row[4])
@@ -304,6 +307,86 @@ class FormulaLensPredictor:
 
         return sorted(detections, key=lambda item: item.score, reverse=True)
 
+    def _decode_predictions(
+        self,
+        predictions: np.ndarray,
+        ratio: float,
+        pad_x: int,
+        pad_y: int,
+        image_width: int,
+        image_height: int,
+    ) -> list[Detection]:
+        return self._decode_prediction_rows(
+            predictions[0],
+            ratio=ratio,
+            pad_x=pad_x,
+            pad_y=pad_y,
+            image_width=image_width,
+            image_height=image_height,
+        )
+
+    def _prepare_image_batch(
+        self,
+        images: list[str | Path | np.ndarray | Image.Image],
+    ) -> list[dict[str, object]]:
+        prepared: list[dict[str, object]] = []
+        for image in images:
+            raw_bgr, image_path = _load_bgr_image(image)
+            image_height, image_width = raw_bgr.shape[:2]
+            processed, ratio, pad_x, pad_y = _preprocess_image(raw_bgr, self.test_size)
+            prepared.append(
+                {
+                    "image_path": image_path,
+                    "image_width": image_width,
+                    "image_height": image_height,
+                    "processed": processed,
+                    "ratio": ratio,
+                    "pad_x": pad_x,
+                    "pad_y": pad_y,
+                }
+            )
+        return prepared
+
+    def _build_inference_results(
+        self,
+        prepared_items: list[dict[str, object]],
+        predictions: np.ndarray,
+    ) -> list[InferenceResult]:
+        results: list[InferenceResult] = []
+        for index, item in enumerate(prepared_items):
+            detections = self._decode_prediction_rows(
+                predictions[index],
+                ratio=float(item["ratio"]),
+                pad_x=int(item["pad_x"]),
+                pad_y=int(item["pad_y"]),
+                image_width=int(item["image_width"]),
+                image_height=int(item["image_height"]),
+            )
+            results.append(
+                InferenceResult(
+                    checkpoint_path=str(self.model_path),
+                    image_path=item["image_path"],
+                    image_width=int(item["image_width"]),
+                    image_height=int(item["image_height"]),
+                    resize_ratio=float(item["ratio"]),
+                    detections=detections,
+                )
+            )
+        return results
+
+    def _supports_native_batching(self, batch_size: int) -> bool:
+        if batch_size <= 1:
+            return False
+        if self.backend == "torch":
+            return True
+
+        batch_dim = self.input_shape[0] if hasattr(self, "input_shape") and self.input_shape else None
+        if batch_dim is None or isinstance(batch_dim, str):
+            return True
+        if isinstance(batch_dim, int):
+            return batch_dim == batch_size
+        return False
+
     def predict(self, image: str | Path | np.ndarray | Image.Image) -> InferenceResult:
         raw_bgr, image_path = _load_bgr_image(image)
         image_height, image_width = raw_bgr.shape[:2]
@@ -321,8 +404,47 @@ class FormulaLensPredictor:
             detections=detections,
         )
 
-    def predict_many(self, images: Iterable[str | Path]) -> list[InferenceResult]:
-        return [self.predict(image) for image in images]
+    def predict_many_with_info(
+        self,
+        images: Iterable[str | Path | np.ndarray | Image.Image],
+    ) -> tuple[list[InferenceResult], bool]:
+        image_list = list(images)
+        if not image_list:
+            return [], False
+
+        prepared_items = self._prepare_image_batch(image_list)
+        if len(prepared_items) == 1:
+            batch = np.expand_dims(prepared_items[0]["processed"], axis=0)
+            predictions = self._run_model(batch)
+            return self._build_inference_results(prepared_items, predictions), False
+
+        if not self._supports_native_batching(len(prepared_items)):
+            results: list[InferenceResult] = []
+            for item in prepared_items:
+                single_batch = np.expand_dims(item["processed"], axis=0)
+                predictions = self._run_model(single_batch)
+                results.extend(self._build_inference_results([item], predictions))
+            return results, False
+
+        batch = np.stack([item["processed"] for item in prepared_items], axis=0)
+        try:
+            predictions = self._run_model(batch)
+            if predictions.shape[0] != len(prepared_items):
+                raise RuntimeError(
+                    f"Unexpected batch output shape {predictions.shape} for {len(prepared_items)} inputs."
+                )
+            return self._build_inference_results(prepared_items, predictions), True
+        except Exception as exc:
+            logger.warning("Falling back to sequential inference for batch_size=%s: %s", len(prepared_items), exc)
+            results: list[InferenceResult] = []
+            for item in prepared_items:
+                single_batch = np.expand_dims(item["processed"], axis=0)
+                predictions = self._run_model(single_batch)
+                results.extend(self._build_inference_results([item], predictions))
+            return results, False
+
+    def predict_many(self, images: Iterable[str | Path | np.ndarray | Image.Image]) -> list[InferenceResult]:
+        return self.predict_many_with_info(images)[0]
 
     def render(
         self,

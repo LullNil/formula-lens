@@ -69,6 +69,22 @@ weights/finetuned/v2/formulalens_yolox_nano_v2.0.0.onnx
 
 You can override `MODEL_VERSION`, `OUTPUT_DIR`, `OUTPUT_PATH`, or `CKPT_PATH` through environment variables.
 
+To export a separate dynamic-batch artifact without replacing the current service model:
+
+```bash
+source .venvs/formulalens-train-cu124/bin/activate
+EXP_FILE=$PWD/configs/train/yolox_nano_v2.py \
+CKPT_PATH=$PWD/weights/finetuned/yolox_nano_v2/best_ckpt.pth \
+MODEL_VERSION=v2.0.0-batch \
+OUTPUT_DIR=$PWD/weights/finetuned/v2 \
+ONNX_BATCH_SIZE=8 \
+ONNX_DYNAMIC_BATCH=1 \
+ONNX_NO_SIMPLIFY=1 \
+bash scripts/export_onnx.sh
+```
+
+This produces a separate file such as `weights/finetuned/v2/formulalens_yolox_nano_v2.0.0-batch.onnx`.
+
 ## Run CPU inference service
 
 The runtime serves CPU inference through ONNX Runtime and starts from a versioned ONNX file. If the model file is missing, `scripts/start_service.sh` downloads it automatically.
@@ -87,6 +103,7 @@ Useful overrides:
 
 - `FORMULALENS_HOST_PORT=18081 docker compose up --build`
 - `FORMULALENS_MODEL_VERSION=v2.0.0 docker compose up --build`
+- `FORMULALENS_MODEL_VERSION=v2.0.0-batch docker compose up --build`
 - `FORMULALENS_MODEL_URL=https://github.com/LullNil/formula-lens/releases/download/v2.0.0/formulalens_yolox_nano_v2.0.0.onnx docker compose up --build`
 - `FORMULALENS_RELEASE_REPO=owner/repo docker compose up --build`
 
@@ -135,6 +152,16 @@ curl -X POST "$API_URL/route" \
   -F "image=@$IMAGE" \
   -F "pix2tex_output=\\frac{x}{y}" \
   -F "pix2tex_score=0.93"
+```
+
+Run batched routing in one request:
+
+```bash
+curl -X POST "$API_URL/route-batch" \
+  -F "images=@$IMAGE_ONE" \
+  -F "images=@$IMAGE_TWO" \
+  -F 'pix2tex_outputs_json=["\\\\frac{x}{y}","x^2+y^2"]' \
+  -F 'pix2tex_scores_json=[0.93,0.88]'
 ```
 
 Get a rendered debug image with boxes:
@@ -231,7 +258,7 @@ Response:
     "enabled": true,
     "applied": true,
     "score": 0.91,
-    "renderer": "mathtext",
+    "renderer": "mathtext_parser",
     "reason": "Rendered pix2tex output was compared against the normalized input mask."
   },
   "confidence_breakdown": {
@@ -245,6 +272,57 @@ Response:
       "numerator": 1
     }
   }
+}
+```
+
+`batched_inference_used` shows whether the loaded model artifact accepted native batch inference. If it is `false`, the endpoint still saves HTTP and serialization overhead, but the current model was processed sequentially inside the service.
+
+### `POST /route-batch`
+
+Request fields:
+
+- `images`: repeated multipart file field
+- `pix2tex_outputs_json`: optional JSON array aligned with `images`
+- `pix2tex_scores_json`: optional JSON array aligned with `images`
+
+Response:
+
+```json
+{
+  "ok": true,
+  "count": 2,
+  "batched_inference_used": true,
+  "results": [
+    {
+      "ok": true,
+      "decision": "use_formula_lens",
+      "reason": "Structural detections are confident enough to override pix2tex.",
+      "bbox_format": "xyxy",
+      "detections": [],
+      "global_confidence": 0.87,
+      "confidence_level": "high",
+      "structure_type": "fraction",
+      "model_version": "v2.0.0",
+      "render_similarity": {
+        "enabled": true,
+        "applied": true,
+        "score": 0.91,
+        "renderer": "mathtext_parser",
+        "reason": "Rendered pix2tex output was compared against the normalized input mask."
+      },
+      "confidence_breakdown": {
+        "global_confidence": 0.87,
+        "base_score": 0.9,
+        "geometry_penalty": 0.01,
+        "combination_penalty": 0.02,
+        "detection_count": 2,
+        "class_distribution": {
+          "denominator": 1,
+          "numerator": 1
+        }
+      }
+    }
+  ]
 }
 ```
 

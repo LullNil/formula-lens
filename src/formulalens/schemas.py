@@ -143,6 +143,15 @@ class RouteResponse(BaseModel):
         return _round_confidence(value)
 
 
+class RouteBatchResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ok: bool = True
+    count: int = Field(ge=0)
+    batched_inference_used: bool = False
+    results: list[RouteResponse] = Field(default_factory=list)
+
+
 class BadCaseResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
