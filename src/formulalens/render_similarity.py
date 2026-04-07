@@ -18,6 +18,8 @@ DEFAULT_CANVAS_SIZE = (416, 416)
 DEFAULT_FONT_SIZE = 28
 DEFAULT_PADDING = 10
 DEFAULT_DILATION_KERNEL = 5
+DEFAULT_RENDERER_BACKEND = "mathtext_parser"
+DEFAULT_RENDER_DPI = 200
 
 
 @dataclass(frozen=True)
@@ -150,19 +152,51 @@ def _normalize_latex_expression(expression: str) -> str:
     return f"${normalized}$"
 
 
-@lru_cache(maxsize=128)
-def _render_latex_png(expression: str, font_size: int) -> bytes:
+def _load_mathtext_dependencies():
     try:
         os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
         import matplotlib
 
         matplotlib.use("Agg")
+        from matplotlib.font_manager import FontProperties
+        from matplotlib.mathtext import MathTextParser
         from matplotlib.backends.backend_agg import FigureCanvasAgg
         from matplotlib.figure import Figure
     except ModuleNotFoundError as exc:  # pragma: no cover - dependency boundary
         raise RuntimeError("matplotlib is not installed.") from exc
+    return FontProperties, MathTextParser, FigureCanvasAgg, Figure
 
-    figure = Figure(figsize=(4, 4), dpi=200, facecolor="white")
+
+@lru_cache(maxsize=1)
+def _get_mathtext_parser():
+    _, MathTextParser, _, _ = _load_mathtext_dependencies()
+    return MathTextParser("agg")
+
+
+@lru_cache(maxsize=128)
+def _render_latex_mask_mathtext_parser(
+    expression: str,
+    font_size: int,
+    dpi: int,
+    canvas_size: tuple[int, int],
+    padding: int,
+) -> np.ndarray:
+    FontProperties, _, _, _ = _load_mathtext_dependencies()
+    parser = _get_mathtext_parser()
+    parsed = parser.parse(
+        _normalize_latex_expression(expression),
+        dpi=dpi,
+        prop=FontProperties(size=font_size),
+    )
+    raster = np.asarray(parsed.image)
+    mask = np.where(raster > 0, 255, 0).astype(np.uint8)
+    return normalize_foreground_mask(mask, canvas_size=canvas_size, padding=padding)
+
+
+@lru_cache(maxsize=128)
+def _render_latex_png(expression: str, font_size: int, dpi: int) -> bytes:
+    _, _, FigureCanvasAgg, Figure = _load_mathtext_dependencies()
+    figure = Figure(figsize=(4, 4), dpi=dpi, facecolor="white")
     canvas = FigureCanvasAgg(figure)
     axis = figure.add_axes([0.0, 0.0, 1.0, 1.0])
     axis.axis("off")
@@ -186,8 +220,22 @@ def render_latex_mask(
     canvas_size: tuple[int, int] = DEFAULT_CANVAS_SIZE,
     font_size: int = DEFAULT_FONT_SIZE,
     padding: int = DEFAULT_PADDING,
+    backend: str = DEFAULT_RENDERER_BACKEND,
+    dpi: int = DEFAULT_RENDER_DPI,
 ) -> np.ndarray:
-    png_bytes = _render_latex_png(expression, font_size=font_size)
+    if backend == "mathtext_parser":
+        return _render_latex_mask_mathtext_parser(
+            expression,
+            font_size=font_size,
+            dpi=dpi,
+            canvas_size=canvas_size,
+            padding=padding,
+        )
+
+    if backend != "mathtext_figure":
+        raise ValueError(f"Unsupported render backend: {backend}")
+
+    png_bytes = _render_latex_png(expression, font_size=font_size, dpi=dpi)
     with Image.open(BytesIO(png_bytes)) as rendered:
         rendered.load()
         return normalize_foreground_mask(_extract_foreground_mask(rendered), canvas_size=canvas_size, padding=padding)
@@ -201,6 +249,8 @@ def compute_render_similarity(
     font_size: int = DEFAULT_FONT_SIZE,
     padding: int = DEFAULT_PADDING,
     dilation_kernel: int = DEFAULT_DILATION_KERNEL,
+    backend: str = DEFAULT_RENDERER_BACKEND,
+    dpi: int = DEFAULT_RENDER_DPI,
 ) -> RenderSimilarityResult:
     try:
         input_mask = normalize_input_image(image, canvas_size=canvas_size, padding=padding)
@@ -208,7 +258,7 @@ def compute_render_similarity(
         return RenderSimilarityResult(
             enabled=True,
             applied=False,
-            renderer="mathtext",
+            renderer=backend,
             reason=f"Unable to normalize the input image: {exc}",
         )
 
@@ -218,12 +268,14 @@ def compute_render_similarity(
             canvas_size=canvas_size,
             font_size=font_size,
             padding=padding,
+            backend=backend,
+            dpi=dpi,
         )
     except Exception as exc:
         return RenderSimilarityResult(
             enabled=True,
             applied=False,
-            renderer="mathtext",
+            renderer=backend,
             reason=f"Unable to render pix2tex output: {exc}",
         )
 
@@ -232,6 +284,6 @@ def compute_render_similarity(
         enabled=True,
         applied=True,
         score=score,
-        renderer="mathtext",
+        renderer=backend,
         reason="Rendered pix2tex output was compared against the normalized input mask.",
     )

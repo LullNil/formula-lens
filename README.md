@@ -103,7 +103,7 @@ bash scripts/start_service.sh
 
 By default the local service listens on `http://0.0.0.0:8000`. You can override host, port, or model path with `FORMULALENS_HOST`, `FORMULALENS_PORT`, and `FORMULALENS_MODEL_PATH`.
 
-Optional routing refinement can be enabled with `FORMULALENS_RENDER_SIMILARITY_ENABLED=1`. When enabled, `/route` tries to render `pix2tex_output`, normalize both images to the same canvas, and compare their foreground masks. If rendering fails, the request falls back to the original routing logic.
+Optional routing refinement can be enabled with `FORMULALENS_RENDER_SIMILARITY_ENABLED=1`. When enabled, `/route` renders `pix2tex_output` with the configured backend (default: `mathtext_parser`, override with `FORMULALENS_RENDER_SIMILARITY_BACKEND`), normalizes both images to the same canvas, and compares their foreground masks. If rendering fails, the request falls back to the original routing logic.
 
 ## Quick checks with curl
 

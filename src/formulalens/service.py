@@ -24,6 +24,8 @@ from .render_similarity import (
     DEFAULT_DILATION_KERNEL,
     DEFAULT_FONT_SIZE,
     DEFAULT_PADDING,
+    DEFAULT_RENDER_DPI,
+    DEFAULT_RENDERER_BACKEND,
     compute_render_similarity,
 )
 from .routing import choose_routing
@@ -71,8 +73,13 @@ def _route_render_similarity_settings() -> dict:
     enabled = _env_flag("FORMULALENS_RENDER_SIMILARITY_ENABLED", bool(settings.get("enabled", False)))
     return {
         "enabled": enabled,
+        "backend": os.getenv(
+            "FORMULALENS_RENDER_SIMILARITY_BACKEND",
+            str(settings.get("backend", DEFAULT_RENDERER_BACKEND)),
+        ),
         "canvas_size": tuple(settings.get("canvas_size", list(DEFAULT_CANVAS_SIZE))),
         "font_size": int(settings.get("font_size", DEFAULT_FONT_SIZE)),
+        "dpi": int(settings.get("dpi", DEFAULT_RENDER_DPI)),
         "padding": int(settings.get("padding", DEFAULT_PADDING)),
         "dilation_kernel": int(settings.get("dilation_kernel", DEFAULT_DILATION_KERNEL)),
         "min_score": float(settings.get("min_score", 0.82)),
@@ -110,8 +117,10 @@ def _build_render_similarity_response(
     result = compute_render_similarity(
         image,
         pix2tex_output,
+        backend=settings["backend"],
         canvas_size=settings["canvas_size"],
         font_size=settings["font_size"],
+        dpi=settings["dpi"],
         padding=settings["padding"],
         dilation_kernel=settings["dilation_kernel"],
     )

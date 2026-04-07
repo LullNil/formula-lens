@@ -12,7 +12,11 @@ SRC_ROOT = PROJECT_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from formulalens.render_similarity import compute_mask_similarity, normalize_foreground_mask
+from formulalens.render_similarity import (
+    compute_mask_similarity,
+    normalize_foreground_mask,
+    render_latex_mask,
+)
 
 
 def test_normalize_foreground_mask_centers_content():
@@ -49,3 +53,19 @@ def test_compute_mask_similarity_prefers_matching_shapes():
 
     assert similar_score > 0.85
     assert mismatch_score < similar_score
+
+
+def test_render_latex_mask_parser_produces_non_empty_mask():
+    mask = render_latex_mask(r"\frac{x}{y}", backend="mathtext_parser")
+
+    assert mask.shape == (416, 416)
+    assert mask.sum() > 0
+
+
+def test_render_latex_mask_parser_stays_close_to_figure_backend():
+    parser_mask = render_latex_mask(r"\sqrt{x+1}", backend="mathtext_parser")
+    figure_mask = render_latex_mask(r"\sqrt{x+1}", backend="mathtext_figure")
+
+    similarity = compute_mask_similarity(parser_mask, figure_mask)
+
+    assert similarity > 0.6
